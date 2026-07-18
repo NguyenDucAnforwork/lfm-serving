@@ -1,0 +1,5 @@
+Sent SIGTERM to 169727
+Killed api_server process(es)
+Remaining GPU compute processes:
+pid, process_name, used_gpu_memory [MiB]
+160398, python, 1952 MiB

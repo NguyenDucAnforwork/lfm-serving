@@ -1,0 +1,63 @@
+# C2: FP8 candidate. FULLY CLEARED (see EXPERIMENTS.md "T1: FP8 online
+# quantization" and "official GPQA-diamond access granted"): +9.3-9.9pp ERS
+# (55.18%->64.4-65.3% across shapes; **65.07%/64.81%/65.29% on this EXACT
+# flag set below**, 3 clean stable runs, mean ~65.1%; the third under
+# simulated 3-core pinning, the most representative single measurement of
+# the grading environment), TPOT mean 4.09ms->2.85ms. **Zero measurable
+# accuracy delta across FOUR independent checks**: arc_challenge full set
+# (0.4258->0.4266), gsm8k limit200 (0.66->0.66 exact), a 198-question
+# GPQA-diamond-mc ungated-mirror check (Delta=-0.015), and -- once the HF
+# account accepted the dataset's access terms mid-session -- **the literal
+# official `gpqa_diamond_zeroshot` lm_eval task on the literal gated
+# Idavidrein/gpqa dataset**: 0.2222->0.2323 (Delta=-0.010, FP8 slightly
+# higher, 0.24 combined SE from zero -- ~1/10th of the official 0.10
+# threshold). No accuracy caveat remains for this candidate.
+#
+# Also resolves a session-1 memory concern: max_num_seqs=8 + max_model_len=5120
+# together (at BF16) had used 37% more VRAM than expected (7236 MiB). Re-tested
+# with fp8_per_tensor at the same low utilization: peak only 5628-5636 MiB --
+# FP8's smaller weights absorbed that interaction effect on this GPU.
+#
+# CRITICAL: must be --quantization=fp8_per_tensor, NOT --quantization=fp8.
+# The legacy `fp8` method loads without error but produces GIBBERISH output
+# on this model (root cause not fully isolated; something in LFM2's hybrid
+# conv/attention layers breaks under the legacy Fp8Config path). Confirmed via
+# direct testing: --quantization=fp8_per_tensor (vLLM 0.22.1's newer online-
+# quant framework) uses the same Marlin W8A16 kernel on Ampere but is fully
+# coherent. Do not "simplify" this back to plain `fp8`.
+#
+# BEFORE SUBMITTING: replace <DOCKERHUB_USER>/lfm-serving:fp8 with the real
+# pushed image tag.
+services:
+  model:
+    image: <DOCKERHUB_USER>/lfm-serving:fp8
+    entrypoint:
+      - python3 #Don't change this to vllm-server
+      - -m #Don't change this to vllm-server
+      - vllm.entrypoints.openai.api_server #Don't change this to vllm-server
+    command:
+      - --model=/model #Don't change this to vllm-server
+      - --served-model-name=LFM2.5-1.2B-Instruct #Don't change this to vllm-server
+      - --host=0.0.0.0 #Don't change this to vllm-server
+      - --port=8000 #Don't change this to vllm-server
+      - --dtype=bfloat16
+      - --quantization=fp8_per_tensor
+      - --max-model-len=5120
+      - --gpu-memory-utilization=0.70
+      - --tensor-parallel-size=1
+      - --max-num-seqs=8
+      - --max-num-batched-tokens=512
+      - --enable-prefix-caching
+      - --prefix-caching-hash-algo=xxhash
+      - --disable-log-stats
+      - --disable-uvicorn-access-log
+    ports:
+      - "8000:8000"
+    shm_size: "2g"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

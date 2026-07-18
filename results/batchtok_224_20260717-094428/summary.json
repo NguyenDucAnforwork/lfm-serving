@@ -1,0 +1,16 @@
+{
+  "n_requests": 330,
+  "n_errors": 0,
+  "error_rate": 0.0,
+  "ers_mean": 0.35101919954077654,
+  "ers_mean_pct": 35.10191995407765,
+  "ttft_ms_mean": 303.022990104827,
+  "ttft_ms_p50": 79.9185298383236,
+  "ttft_ms_p95": 1332.216676045212,
+  "tpot_ms_mean": 6.420829843099555,
+  "tpot_ms_p95": 9.898852518745635,
+  "latency_ms_mean": 1549.2980467832901,
+  "latency_ms_p95": 2927.059902809561,
+  "benchmark_duration_s": 332.93998084403574,
+  "prefix_overlap": "strong"
+}

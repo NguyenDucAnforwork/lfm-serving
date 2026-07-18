@@ -1,0 +1,4 @@
+Sent SIGTERM to 243611
+Killed api_server process(es)
+Remaining GPU compute processes:
+pid, process_name, used_gpu_memory [MiB]

@@ -1,0 +1,19 @@
+# Virtual environments (regenerate via README "Reproduce from scratch")
+.venv/
+.venv-eval/
+
+# Model weights (2.2GB, regenerable from the HF Hub -- see README bootstrap)
+submission/model/*
+!submission/model/.gitkeep
+
+# Python
+__pycache__/
+*.pyc
+
+# Not ours -- root-owned artifacts from the base image / unrelated to this project
+__MACOSX/
+input_part2.zip
+
+# Local secrets -- never commit
+.env
+*.env.local

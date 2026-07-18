@@ -1,0 +1,139 @@
+{
+  "results": {
+    "arc_challenge": {
+      "name": "arc_challenge",
+      "alias": "arc_challenge",
+      "sample_len": 1172,
+      "acc,none": 0.3873720136518771,
+      "acc_stderr,none": 0.014235872487909897,
+      "acc_norm,none": 0.4257679180887372,
+      "acc_norm_stderr,none": 0.014449464278868677
+    }
+  },
+  "group_subtasks": {},
+  "configs": {
+    "arc_challenge": {
+      "task": "arc_challenge",
+      "dataset_path": "allenai/ai2_arc",
+      "dataset_name": "ARC-Challenge",
+      "training_split": "train",
+      "validation_split": "validation",
+      "test_split": "test",
+      "doc_to_text": "Question: {{question}}\nAnswer:",
+      "doc_to_target": "{{choices.label.index(answerKey)}}",
+      "unsafe_code": false,
+      "doc_to_choice": "{{choices.text}}",
+      "description": "",
+      "target_delimiter": " ",
+      "fewshot_delimiter": "\n\n",
+      "fewshot_config": {
+        "sampler": "default",
+        "split": null,
+        "process_docs": null,
+        "fewshot_indices": null,
+        "samples": null,
+        "doc_to_text": "Question: {{question}}\nAnswer:",
+        "doc_to_choice": "{{choices.text}}",
+        "doc_to_target": "{{choices.label.index(answerKey)}}",
+        "gen_prefix": null,
+        "fewshot_delimiter": "\n\n",
+        "target_delimiter": " "
+      },
+      "num_fewshot": 0,
+      "metric_list": [
+        {
+          "metric": "acc",
+          "aggregation": "mean",
+          "higher_is_better": true
+        },
+        {
+          "metric": "acc_norm",
+          "aggregation": "mean",
+          "higher_is_better": true
+        }
+      ],
+      "output_type": "multiple_choice",
+      "repeats": 1,
+      "should_decontaminate": true,
+      "doc_to_decontamination_query": "Question: {{question}}\nAnswer:",
+      "metadata": {
+        "version": 1.0,
+        "model": "LiquidAI/LFM2.5-1.2B-Instruct",
+        "base_url": "http://127.0.0.1:8000/v1/completions",
+        "num_concurrent": 8,
+        "max_retries": 2,
+        "tokenized_requests": false,
+        "config_source": "/workspace/lfm-serving/.venv-eval/lib/python3.12/site-packages/lm_eval/tasks/arc/arc_challenge.yaml"
+      }
+    }
+  },
+  "versions": {
+    "arc_challenge": 1.0
+  },
+  "n-shot": {
+    "arc_challenge": 0
+  },
+  "higher_is_better": {
+    "arc_challenge": {
+      "acc": true,
+      "acc_norm": true
+    }
+  },
+  "n-samples": {
+    "arc_challenge": {
+      "original": 1172,
+      "effective": 1172
+    }
+  },
+  "config": {
+    "model": "local-completions",
+    "model_args": {
+      "model": "LiquidAI/LFM2.5-1.2B-Instruct",
+      "base_url": "http://127.0.0.1:8000/v1/completions",
+      "num_concurrent": 8,
+      "max_retries": 2,
+      "tokenized_requests": false
+    },
+    "batch_size": 1,
+    "batch_sizes": [],
+    "device": "cuda:0",
+    "use_cache": null,
+    "limit": null,
+    "bootstrap_iters": 100000,
+    "gen_kwargs": {},
+    "random_seed": 0,
+    "numpy_seed": 1234,
+    "torch_seed": 1234,
+    "fewshot_seed": 1234
+  },
+  "git_hash": null,
+  "date": 1784308742.255571,
+  "pretty_env_info": "N/A (torch not installed)",
+  "transformers_version": "5.14.1",
+  "lm_eval_version": "0.4.12",
+  "upper_git_hash": null,
+  "tokenizer_pad_token": [
+    "<|pad|>",
+    "0"
+  ],
+  "tokenizer_eos_token": [
+    "<|im_end|>",
+    "7"
+  ],
+  "tokenizer_bos_token": [
+    "<|startoftext|>",
+    "1"
+  ],
+  "eot_token_id": 7,
+  "max_length": 2047,
+  "task_hashes": {},
+  "model_source": "local-completions",
+  "model_name": "LiquidAI/LFM2.5-1.2B-Instruct",
+  "model_name_sanitized": "LiquidAI__LFM2.5-1.2B-Instruct",
+  "system_instruction": null,
+  "system_instruction_sha": null,
+  "fewshot_as_multiturn": null,
+  "chat_template": null,
+  "chat_template_sha": null,
+  "total_evaluation_time_seconds": "63.681599183008075"
+}

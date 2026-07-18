@@ -1,0 +1,36 @@
+Running trace replay: trace=trace_grading_public.jsonl model=LiquidAI/LFM2.5-1.2B-Instruct base_url=http://127.0.0.1:8000
+  [25/420] last=5-2 status=ok
+  [50/420] last=9-1 status=ok
+  [75/420] last=14-2 status=ok
+  [100/420] last=19-0 status=ok
+  [125/420] last=18-5 status=ok
+  [150/420] last=24-4 status=ok
+  [175/420] last=28-4 status=ok
+  [200/420] last=33-3 status=ok
+  [225/420] last=36-4 status=ok
+  [250/420] last=42-1 status=ok
+  [275/420] last=43-3 status=ok
+  [300/420] last=51-2 status=ok
+  [325/420] last=56-0 status=ok
+  [350/420] last=58-2 status=ok
+  [375/420] last=62-2 status=ok
+  [400/420] last=68-1 status=ok
+  [420/420] last=69-5 status=ok
+Wrote 420 request records to /workspace/lfm-serving/results/best_20260717-083728/results.jsonl and /workspace/lfm-serving/results/best_20260717-083728/results.csv
+
+=== Summary (scored requests, warmup excluded) ===
+  n_requests: 330
+  n_errors: 0
+  error_rate: 0.0
+  ers_mean: 0.24402584233484353
+  ers_mean_pct: 24.402584233484355
+  ttft_ms_mean: 363.7767801795042
+  ttft_ms_p50: 94.84228864312172
+  ttft_ms_p95: 1452.9353512451055
+  tpot_ms_mean: 7.9314343715593445
+  tpot_ms_p95: 9.819218340166605
+  latency_ms_mean: 1903.7348844280298
+  latency_ms_p95: 3151.9353425130253
+  benchmark_duration_s: 332.8487168587744
+
+Summary written to /workspace/lfm-serving/results/best_20260717-083728/summary.json

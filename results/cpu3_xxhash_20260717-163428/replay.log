@@ -1,0 +1,39 @@
+Running trace replay: trace=trace_grading_public.jsonl model=LiquidAI/LFM2.5-1.2B-Instruct base_url=http://127.0.0.1:8000
+  prefix_overlap=strong (full body shared per conv_id)
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+  [25/420] last=6-0 status=ok
+  [50/420] last=10-1 status=ok
+  [75/420] last=15-1 status=ok
+  [100/420] last=13-5 status=ok
+  [125/420] last=22-0 status=ok
+  [150/420] last=26-0 status=ok
+  [175/420] last=29-2 status=ok
+  [200/420] last=33-3 status=ok
+  [225/420] last=37-2 status=ok
+  [250/420] last=39-4 status=ok
+  [275/420] last=48-2 status=ok
+  [300/420] last=48-4 status=ok
+  [325/420] last=52-5 status=ok
+  [350/420] last=60-1 status=ok
+  [375/420] last=63-1 status=ok
+  [400/420] last=67-1 status=ok
+  [420/420] last=69-5 status=ok
+Wrote 420 request records to /workspace/lfm-serving/results/cpu3_xxhash_20260717-163428/results.jsonl and /workspace/lfm-serving/results/cpu3_xxhash_20260717-163428/results.csv
+
+=== Summary (scored requests, warmup excluded) ===
+  n_requests: 330
+  n_errors: 0
+  error_rate: 0.0
+  ers_mean: 0.5503958847699687
+  ers_mean_pct: 55.03958847699687
+  ttft_ms_mean: 89.12921673194928
+  ttft_ms_p50: 54.879553616046906
+  ttft_ms_p95: 243.08617413043976
+  tpot_ms_mean: 4.13861942455902
+  tpot_ms_p95: 5.014921424946831
+  latency_ms_mean: 884.6869384249052
+  latency_ms_p95: 1087.3102460056543
+  benchmark_duration_s: 328.31032237038016
+  prefix_overlap: strong
+
+Summary written to /workspace/lfm-serving/results/cpu3_xxhash_20260717-163428/summary.json

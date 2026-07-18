@@ -1,0 +1,45 @@
+# C1: SAFE-BF16 candidate. Submit this one FIRST and EARLY (tie-break rule #4
+# favors earlier submissions; this candidate also has zero accuracy risk,
+# Delta=0, which wins tie-break rule #1).
+#
+# Matches the BTC sample docker-compose.yml structure exactly: fixed
+# entrypoint (python3 -m vllm.entrypoints.openai.api_server), all vLLM flags
+# in `command:`. Flags below = configs/submission_h200.env (see
+# EXPERIMENTS.md "H200 submission profile" for the reasoning/assumptions
+# behind max_model_len/gpu_memory_utilization/max_num_seqs/max_num_batched_tokens
+# -- these are REASONED BUT UNTESTED on real H200 hardware).
+#
+# BEFORE SUBMITTING: replace <DOCKERHUB_USER>/lfm-serving:safe-bf16 with the
+# real pushed image tag.
+services:
+  model:
+    image: <DOCKERHUB_USER>/lfm-serving:safe-bf16
+    entrypoint:
+      - python3 #Don't change this to vllm-server
+      - -m #Don't change this to vllm-server
+      - vllm.entrypoints.openai.api_server #Don't change this to vllm-server
+    command:
+      - --model=/model #Don't change this to vllm-server
+      - --served-model-name=LFM2.5-1.2B-Instruct #Don't change this to vllm-server
+      - --host=0.0.0.0 #Don't change this to vllm-server
+      - --port=8000 #Don't change this to vllm-server
+      - --dtype=bfloat16
+      - --max-model-len=5120
+      - --gpu-memory-utilization=0.70
+      - --tensor-parallel-size=1
+      - --max-num-seqs=8
+      - --max-num-batched-tokens=512
+      - --enable-prefix-caching
+      - --prefix-caching-hash-algo=xxhash
+      - --disable-log-stats
+      - --disable-uvicorn-access-log
+    ports:
+      - "8000:8000"
+    shm_size: "2g"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

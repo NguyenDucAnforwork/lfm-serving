@@ -1,0 +1,7 @@
+.venv/
+results/
+logs/
+__MACOSX/
+*.zip
+trace_grading_public.jsonl
+.pytest_cache/

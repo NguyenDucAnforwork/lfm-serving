@@ -1,0 +1,53 @@
+(APIServer pid=83884) INFO 07-17 06:20:40 [utils.py:344] 
+(APIServer pid=83884) INFO 07-17 06:20:40 [utils.py:344]        █     █     █▄   ▄█
+(APIServer pid=83884) INFO 07-17 06:20:40 [utils.py:344]  ▄▄ ▄█ █     █     █ ▀▄▀ █  version 0.22.1
+(APIServer pid=83884) INFO 07-17 06:20:40 [utils.py:344]   █▄█▀ █     █     █     █  model   LiquidAI/LFM2.5-1.2B-Instruct
+(APIServer pid=83884) INFO 07-17 06:20:40 [utils.py:344]    ▀▀  ▀▀▀▀▀ ▀▀▀▀▀ ▀     ▀
+(APIServer pid=83884) INFO 07-17 06:20:40 [utils.py:344] 
+(APIServer pid=83884) INFO 07-17 06:20:40 [utils.py:278] non-default args: {'host': '127.0.0.1', 'model': 'LiquidAI/LFM2.5-1.2B-Instruct', 'dtype': 'bfloat16', 'max_model_len': 4608, 'gpu_memory_utilization': 0.22, 'enable_prefix_caching': True, 'max_num_seqs': 4, 'enable_chunked_prefill': False}
+(APIServer pid=83884) Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+(APIServer pid=83884) INFO 07-17 06:20:42 [model.py:617] Resolved architecture: Lfm2ForCausalLM
+(APIServer pid=83884) INFO 07-17 06:20:42 [model.py:1752] Using max model len 4608
+(APIServer pid=83884) WARNING 07-17 06:20:42 [arg_utils.py:2383] This model does not officially support disabling chunked prefill. Disabling this manually may cause the engine to crash or produce incorrect outputs.
+(APIServer pid=83884) WARNING 07-17 06:20:42 [config.py:355] Mamba cache mode is set to 'align' for Lfm2ForCausalLM by default when prefix caching is enabled
+(APIServer pid=83884) Traceback (most recent call last):
+(APIServer pid=83884)   File "<frozen runpy>", line 198, in _run_module_as_main
+(APIServer pid=83884)   File "<frozen runpy>", line 88, in _run_code
+(APIServer pid=83884)   File "/workspace/lfm-serving/.venv/lib/python3.12/site-packages/vllm/entrypoints/openai/api_server.py", line 718, in <module>
+(APIServer pid=83884)     uvloop.run(run_server(args))
+(APIServer pid=83884)   File "/workspace/lfm-serving/.venv/lib/python3.12/site-packages/uvloop/__init__.py", line 96, in run
+(APIServer pid=83884)     return __asyncio.run(
+(APIServer pid=83884)            ^^^^^^^^^^^^^^
+(APIServer pid=83884)   File "/usr/lib/python3.12/asyncio/runners.py", line 194, in run
+(APIServer pid=83884)     return runner.run(main)
+(APIServer pid=83884)            ^^^^^^^^^^^^^^^^
+(APIServer pid=83884)   File "/usr/lib/python3.12/asyncio/runners.py", line 118, in run
+(APIServer pid=83884)     return self._loop.run_until_complete(task)
+(APIServer pid=83884)            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(APIServer pid=83884)   File "uvloop/loop.pyx", line 1518, in uvloop.loop.Loop.run_until_complete
+(APIServer pid=83884)   File "/workspace/lfm-serving/.venv/lib/python3.12/site-packages/uvloop/__init__.py", line 48, in wrapper
+(APIServer pid=83884)     return await main
+(APIServer pid=83884)            ^^^^^^^^^^
+(APIServer pid=83884)   File "/workspace/lfm-serving/.venv/lib/python3.12/site-packages/vllm/entrypoints/openai/api_server.py", line 678, in run_server
+(APIServer pid=83884)     await run_server_worker(listen_address, sock, args, **uvicorn_kwargs)
+(APIServer pid=83884)   File "/workspace/lfm-serving/.venv/lib/python3.12/site-packages/vllm/entrypoints/openai/api_server.py", line 692, in run_server_worker
+(APIServer pid=83884)     async with build_async_engine_client(
+(APIServer pid=83884)   File "/usr/lib/python3.12/contextlib.py", line 210, in __aenter__
+(APIServer pid=83884)     return await anext(self.gen)
+(APIServer pid=83884)            ^^^^^^^^^^^^^^^^^^^^^
+(APIServer pid=83884)   File "/workspace/lfm-serving/.venv/lib/python3.12/site-packages/vllm/entrypoints/openai/api_server.py", line 100, in build_async_engine_client
+(APIServer pid=83884)     async with build_async_engine_client_from_engine_args(
+(APIServer pid=83884)   File "/usr/lib/python3.12/contextlib.py", line 210, in __aenter__
+(APIServer pid=83884)     return await anext(self.gen)
+(APIServer pid=83884)            ^^^^^^^^^^^^^^^^^^^^^
+(APIServer pid=83884)   File "/workspace/lfm-serving/.venv/lib/python3.12/site-packages/vllm/entrypoints/openai/api_server.py", line 124, in build_async_engine_client_from_engine_args
+(APIServer pid=83884)     vllm_config = engine_args.create_engine_config(usage_context=usage_context)
+(APIServer pid=83884)                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(APIServer pid=83884)   File "/workspace/lfm-serving/.venv/lib/python3.12/site-packages/vllm/engine/arg_utils.py", line 2224, in create_engine_config
+(APIServer pid=83884)     config = VllmConfig(
+(APIServer pid=83884)              ^^^^^^^^^^^
+(APIServer pid=83884)   File "/workspace/lfm-serving/.venv/lib/python3.12/site-packages/pydantic/_internal/_dataclasses.py", line 121, in __init__
+(APIServer pid=83884)     s.__pydantic_validator__.validate_python(ArgsKwargs(args, kwargs), self_instance=s)
+(APIServer pid=83884) pydantic_core._pydantic_core.ValidationError: 1 validation error for VllmConfig
+(APIServer pid=83884)   Assertion failed, Chunked prefill is required for mamba cache mode 'align'. [type=assertion_error, input_value=ArgsKwargs((), {'model_co... 'shutdown_timeout': 0}), input_type=ArgsKwargs]
+(APIServer pid=83884)     For further information visit https://errors.pydantic.dev/2.13/v/assertion_error
