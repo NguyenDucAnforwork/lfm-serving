@@ -196,3 +196,37 @@ class PromptBuilder:
             messages, add_generation_prompt=True, tokenize=True, return_dict=False
         )
         return len(ids)
+
+    # ------------------------------------------------------------------
+    # Spec-mode builders (official updated workload, see gen_spec_trace.py)
+    #
+    # Real multi-turn growing-context structure:
+    #   * one shared SYSTEM prefix, byte-identical across ALL conversations
+    #     -> a genuine global prefix-cache hit after the first conversation
+    #   * a per-conversation prefix (unique per conv_id) prepended to turn 0
+    #   * a short fresh user block each turn
+    #   * assistant replies are threaded back by the replayer, so turn t's
+    #     prompt is a real extension of turn t-1's -> realistic within-conv
+    #     prefix-cache reuse of both the earlier prompt AND generated tokens.
+    # ------------------------------------------------------------------
+    def _text_of_len(self, rng_key: str, n_tokens: int) -> str:
+        rng = random.Random(rng_key)
+        ids = self._gen_ids(rng, n_tokens)
+        return self.tokenizer.decode(ids[:n_tokens], skip_special_tokens=True)
+
+    def build_system_content(self, n_tokens: int = 1000) -> str:
+        # Fixed seed string (NOT dependent on self.seed or conv_id) so every
+        # conversation sends the identical system prefix.
+        if getattr(self, "_system_text", None) is None:
+            self._system_text = self._text_of_len("SHARED-SYSTEM-PREFIX", n_tokens)
+        return self._system_text
+
+    def build_conv_prefix(self, conv_id: int, n_tokens: int = 1000) -> str:
+        return self._text_of_len(f"{self.seed}-convprefix-{conv_id}", n_tokens)
+
+    def build_user_turn(self, conv_id: int, turn_idx: int, n_tokens: int = 150) -> str:
+        suffix = SUFFIX_TEMPLATE.format(turn=turn_idx)
+        suffix_len = len(self.tokenizer(suffix, add_special_tokens=False)["input_ids"])
+        body_len = max(n_tokens - suffix_len, 8)
+        body = self._text_of_len(f"{self.seed}-user-{conv_id}-{turn_idx}", body_len)
+        return body + suffix

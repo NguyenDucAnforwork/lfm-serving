@@ -46,7 +46,7 @@ async def send_turn(
     session: aiohttp.ClientSession,
     base_url: str,
     model: str,
-    content: str,
+    messages: list[dict],
     max_tokens: int,
     ignore_eos: bool,
     timeout_s: float,
@@ -54,7 +54,7 @@ async def send_turn(
 ) -> dict:
     payload = {
         "model": model,
-        "messages": build_messages(content),
+        "messages": messages,
         "max_tokens": max_tokens,
         "stream": True,
         "stream_options": {"include_usage": True},
@@ -141,6 +141,7 @@ async def send_turn(
         "latency_ms": latency_ms,
         "output_tokens": n_output_tokens,
         "prompt_tokens_actual": usage.get("prompt_tokens") if usage else None,
+        "output_text": "".join(content_parts),
         "output_text_len": len("".join(content_parts)),
         "t_send_epoch": time.time() - (time.perf_counter() - t_send),
     }
@@ -158,6 +159,7 @@ async def run_conversation(
     ignore_eos: bool,
     timeout_s: float,
     results: list,
+    workload: str = "legacy",
     progress_cb=None,
 ):
     turn0 = rows[0]
@@ -167,8 +169,29 @@ async def run_conversation(
         await asyncio.sleep(target_send_time - now)
 
     last_turn_idx = rows[-1].turn_idx
+    # In spec mode we carry a growing message history across the conversation:
+    # shared system prefix + per-conv prefix (turn 0) + each turn's fresh user
+    # block, with the model's own replies threaded back as assistant turns.
+    history: list[dict] = []
+    if workload == "spec":
+        history.append({"role": "system", "content": prompt_builder.build_system_content()})
+
     for row in rows:
-        content = prompt_builder.build_turn_content(conv_id, row.turn_idx, row.in_tokens_est)
+        if workload == "spec":
+            if row.turn_idx == 0:
+                user = (
+                    prompt_builder.build_conv_prefix(conv_id)
+                    + "\n\n"
+                    + prompt_builder.build_user_turn(conv_id, 0)
+                )
+            else:
+                user = prompt_builder.build_user_turn(conv_id, row.turn_idx)
+            history.append({"role": "user", "content": user})
+            messages = list(history)
+        else:
+            content = prompt_builder.build_turn_content(conv_id, row.turn_idx, row.in_tokens_est)
+            messages = [{"role": "user", "content": content}]
+
         meta = {
             "request_id": f"{conv_id}-{row.turn_idx}",
             "conv_id": conv_id,
@@ -179,9 +202,14 @@ async def run_conversation(
             "scheduled_offset_ms": (time.perf_counter() - trace_start) * 1000.0,
         }
         record = await send_turn(
-            session, base_url, model, content, row.out_tokens_max, ignore_eos, timeout_s, meta
+            session, base_url, model, messages, row.out_tokens_max, ignore_eos, timeout_s, meta
         )
         results.append(record)
+        if workload == "spec":
+            # Thread the reply back so the next turn is a real extension.
+            history.append({"role": "assistant", "content": record.get("output_text") or ""})
+        # Keep result files lean: drop the (large) captured text after use.
+        record.pop("output_text", None)
         if progress_cb:
             progress_cb(record)
         if row.turn_idx != last_turn_idx:
@@ -219,7 +247,8 @@ async def run_benchmark(args) -> list[dict]:
         tasks = [
             run_conversation(
                 conv_id, conv_rows, trace_start, prompt_builder, session,
-                args.base_url, args.model, args.ignore_eos, args.timeout, results, progress_cb,
+                args.base_url, args.model, args.ignore_eos, args.timeout, results,
+                args.workload, progress_cb,
             )
             for conv_id, conv_rows in by_conv.items()
         ]
@@ -252,6 +281,13 @@ def main():
     ap.add_argument("--out-dir", default=None, help="Directory for results; default results/<timestamp>")
     ap.add_argument("--name", default=None, help="Experiment name; used in default out-dir and EXPERIMENTS.md")
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument(
+        "--workload", choices=["legacy", "spec"], default="legacy",
+        help="legacy: one single-user-message prompt per turn (old trace_grading_public "
+             "assumptions). spec: official updated workload (shared system prefix + "
+             "per-conv prefix + growing multi-turn history with replies threaded back). "
+             "Use with trace_grading_spec.jsonl.",
+    )
     ap.add_argument(
         "--prefix-overlap", choices=["strong", "weak"], default="strong",
         help="strong (default): every turn shares the whole body with earlier turns of the "

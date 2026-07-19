@@ -867,3 +867,74 @@ final recommended submission candidate.
   wasn't shown to be the bottleneck (max_num_seqs=4/8/16 were equivalent) -- this only matters for
   the H200 profile's much larger budget, addressed separately above.
 - Speculative decoding / quantization: explicitly out of scope per task instructions at this stage.
+
+## Session 3: official workload spec updated (18/07/2026) -- trace regenerated to match
+
+The organizer published an explicit workload spec (`grading_workflow_spec.jsonl`)
+that supersedes the reverse-engineered shape used through Sessions 1-2. It differs
+from `trace_grading_public.jsonl` in two material ways:
+
+| Property | Old trace (`trace_grading_public.jsonl`) | Official spec (`grading_workflow_spec.jsonl`) |
+|---|---|---|
+| conversations x turns | 70 x 6 = 420 | 70 x 6 = 420 (same) |
+| input tokens | ~4000 **constant** every turn | **growing**: `in(t) = 2150 + 450*t` -> 2150..4400 |
+| output tokens | 200 | **300** (pinned) |
+| prefix structure | one shared body per conv | **shared_system_prefix 1000 (identical across ALL convs)** + per_conversation_prefix 1000 + 150 new user tokens/turn |
+
+All Session-1/2 ERS numbers were measured on the *old* shape, so they are now only
+indicative. Actions taken this session:
+
+- **`benchmark/gen_spec_trace.py`** -- regenerates the trace from the spec into
+  **`trace_grading_spec.jsonl`**, preserving the seed-42 Poisson arrival timing
+  (turn-0 `timestamp_ms`, `think_ms`, warmup flags) and rewriting only the token
+  structure (growing `in_tokens_est`, `out_tokens_max=300`).
+- **`benchmark/trace_utils.py`** -- added spec-mode builders: `build_system_content`
+  (1000-token prefix, byte-identical across all conversations -> real *global*
+  prefix-cache hit, a layer the old shape lacked), `build_conv_prefix` (1000-token
+  per-conv prefix on turn 0), `build_user_turn` (~150-token fresh user block).
+- **`benchmark/replay_trace.py`** -- new `--workload spec` mode that carries a
+  **growing message history** across a conversation (system + per-conv prefix +
+  each turn's user block) and **threads the model's own reply back as the assistant
+  turn**, so turn `t`'s prompt is a genuine extension of turn `t-1` -> realistic
+  within-conversation prefix-cache reuse of both earlier prompt and generated tokens.
+  Old single-message behavior preserved under `--workload legacy` (default).
+
+**Token-length validation (LFM2.5 tokenizer, no GPU needed):** system=1000,
+conv_prefix=1000, user_turn~=150; actual chat-template prompt lengths per turn land
+within ~2% of the spec's `2150 + 450*t` (turn 5 ~= 4470 in + 300 out < max_model_len
+5120, so the existing submission shape still fits with headroom).
+
+### Local re-measurement is BLOCKED on this dev box (environment, not code)
+
+Re-running ERS with the exact submission stack cannot be done here:
+
+1. **Driver too old for the LFM2.5 + vLLM-0.22.1 combination.** This box runs NVIDIA
+   driver `535.309.01` (CUDA 12.2 max). vLLM 0.22.1 pins `torch 2.11.0+cu130`
+   (CUDA 13) -> engine core dies immediately with *"NVIDIA driver too old (found
+   12020)"*. torch cu124 builds (vLLM 0.7/0.8) need driver >= 545, also unavailable.
+   The only CUDA-12.2-compatible torch is cu121 (vLLM <= 0.6.x) -- but the model's
+   architecture is **`Lfm2ForCausalLM`**, added to vLLM only in the 2025 (>= ~0.8/0.9)
+   line, so no cu121-era vLLM can even load it. **There is no vLLM version that both
+   runs on this driver and supports LFM2.5** -> installing a "CUDA-12 vLLM" is not a
+   viable path on this server (disk/RAM are fine: /data 214G free, 193G RAM free; the
+   binding constraint is driver+architecture). This does not affect grading (MiG H200,
+   driver 590.x / CUDA 13.x).
+2. **GPU contention.** A co-tenant holds 75.8/81.5 GiB (only ~5 GiB free), matching the
+   README's documented contention that distorts ERS.
+
+The `--workload spec` command is ready to run verbatim on any CUDA-13-capable box or
+the grading environment:
+
+```bash
+python benchmark/replay_trace.py --trace trace_grading_spec.jsonl \
+  --workload spec --name fp8_spec --model LFM2.5-1.2B-Instruct --verbose
+```
+
+### Accuracy note (unchanged by the trace update)
+
+Updating the trace has **zero** accuracy-gate implication -- GPQA is a fixed benchmark
+independent of the serving workload; the trace only affects ERS. The accuracy gate
+depends solely on the quantization choice, and `fp8_per_tensor` remains cleared:
+literal `gpqa_diamond_zeroshot` on the gated `Idavidrein/gpqa` gave BF16 0.2222 ->
+FP8 0.2323 (Delta=-0.010, FP8 slightly higher), ~1/10 of the 0.10 penalty threshold
+(see Session 2). Keep `fp8_per_tensor`; do not trade quantization for ERS.
