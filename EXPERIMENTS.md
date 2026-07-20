@@ -938,3 +938,449 @@ depends solely on the quantization choice, and `fp8_per_tensor` remains cleared:
 literal `gpqa_diamond_zeroshot` on the gated `Idavidrein/gpqa` gave BF16 0.2222 ->
 FP8 0.2323 (Delta=-0.010, FP8 slightly higher), ~1/10 of the 0.10 penalty threshold
 (see Session 2). Keep `fp8_per_tensor`; do not trade quantization for ERS.
+
+## Session 4: decode-cost goal, profiling/W4 preparation (2026-07-20)
+
+Goal: reduce the current **official** FP8 submission's decode cost from TBT median
+**4 ms** toward **3.0-3.5 ms** without increasing `failed_count` or `accuracy_drop`.
+The official baseline remains `SUBMISSION_RESULTS.md` S2: FP8 per-tensor,
+`max_num_batched_tokens=512`, ERS 60.20, TBT median 4 ms, failed requests 4,
+accuracy drop 0. Local old-trace numbers are useful only as mechanism signals after
+the Session-3 workload update.
+
+### Environment check: runtime profiling is blocked on this host
+
+Rebuilt local environments because `.venv` was absent in this checkout:
+
+- `.venv`: `vllm==0.22.1`, `torch==2.11.0+cu130`, `xxhash`.
+- `.venv-quant`: `llmcompressor==0.12.0`, `compressed-tensors==0.17.1`,
+  `transformers==5.10.1`, `torch==2.12.0+cu130`.
+
+GPU is currently idle (`RTX 3090`, driver `560.35.03`, 24 GiB), but both Torch CUDA
+13 stacks fail CUDA initialization:
+
+```text
+RuntimeError: The NVIDIA driver on your system is too old (found version 12060).
+```
+
+This is a hard blocker for the requested profiler run and for any ERS/TBT measurement
+on this machine. vLLM gets as far as API/engine config construction, then dies at
+`torch._C._cuda_init()` inside `gpu_worker.init_device`. No decode kernels run, so no
+GEMM/scaling/conv/attention/launch attribution can be collected locally. This does
+not invalidate the official H200 environment, which previously ran the same vLLM
+image/config successfully.
+
+### Tooling added for the next CUDA-13/H200 run
+
+- `scripts/start_server.sh` now exposes:
+  - `LINEAR_BACKEND` -> `--linear-backend` (`machete`, `marlin`, etc.).
+  - `PROFILER_CONFIG` -> `--profiler-config`.
+- `scripts/run_profile_capture.sh` starts a configured server with vLLM's torch
+  profiler enabled, calls `/start_profile`, replays `trace_grading_spec.jsonl`
+  with `--workload spec`, calls `/stop_profile`, and writes:
+  - `summary_ext.json` with ERS, TTFT mean/p50/p95, TBT/TPOT mean/p50/p95,
+    decode tokens/s, failures.
+  - `failure_analysis.txt`.
+  - `torch_profile/` traces for kernel/operator attribution.
+- `benchmark/summarize_run.py` adds p50 TBT/TPOT and decode throughput reporting.
+- `benchmark/analyze_failures.py` clusters failures by type, turn, input/output
+  length, observed overlap, and elapsed-minute cluster. With `--server-log`, it
+  correctly attributes connection-refused cascades after a CUDA engine crash to
+  `cuda_after_engine_crash`.
+- `benchmark/analyze_profile_trace.py` parses vLLM/Torch Chrome trace JSON or
+  JSON.GZ files and buckets timed events into `gemm`, `fp8_scaling`,
+  `gated_conv_state`, `attention`, `launch_overhead`, and `other`, with top events
+  per bucket for auditability. This is the required first-pass evidence before
+  deciding whether static FP8, W4, or kernel fusion is the right next step.
+- `benchmark/compare_accuracy.py` compares baseline and candidate per-sample
+  accuracy JSONL files and groups exact regressions/fixes by task/domain, prompt
+  length bucket, answer format, and a supplied quantized-module policy label.
+- `benchmark/gpqa_eval.py` now writes per-sample `sample_id`, task, domain,
+  prompt-length estimate, answer format, output length, and a problem SHA1 so exact
+  changed samples can be compared instead of relying only on aggregate accuracy.
+- `scripts/validate_w4_candidate.py` checks that a W4 artifact/run really satisfies
+  the experiment constraints: `compressed-tensors`, W4 int symmetric group-128,
+  `lm_head` ignored, no BitsAndBytes, no FP8 quantization mixed into the W4 config,
+  and a server log proving Marlin or Machete was selected for
+  `CompressedTensorsWNA16`.
+- `benchmark/aggregate_runs.py` aggregates `summary_ext.json` from repeated runs and
+  reports the stability gates: at least 3 runs, all TBT p50 <=3.5 ms or all runs
+  >=15% better than matched baseline, and no extra failures.
+- `scripts/run_experiment.sh` automatically writes `w4_validation.json` for
+  `QUANTIZATION=compressed-tensors` runs so backend/artifact constraint evidence stays
+  attached to the result directory.
+- `benchmark/candidate_report.py` combines repeated run summaries, W4 validation,
+  accuracy diff, and the submission compose path into one explicit PASS vs
+  FAIL/INCOMPLETE report. It only counts run dirs without `FAILED` or `CONTENDED`
+  markers as clean runs, and it validates the W4 compose flags instead of only
+  checking that the compose file exists.
+- `scripts/validate_submission_compose.py` checks submission compose command flags
+  without a PyYAML dependency. It rejects BitsAndBytes, W4+FP8 mixing, missing
+  Machete/Marlin backend for W4, and placeholder image tags unless explicitly
+  allowed for pre-submit template validation.
+- `scripts/prepare_w4_submission.sh` is a guarded packaging helper: it refuses to
+  populate `submission/model` unless `candidate_report.json` has
+  `gates.candidate_passes=true`, then validates the W4 artifact and compose before
+  copying the artifact into the Docker build context.
+- `scripts/run_accuracy.sh` starts a server from `configs/<name>.env`, runs
+  `benchmark/gpqa_eval.py`, and writes `accuracy/gpqa.jsonl`,
+  `accuracy/gpqa_summary.json`, and logs under `results/<run_id>/`. For W4 configs,
+  it also writes `w4_validation.json`.
+- `benchmark/summarize_accuracy.py` summarizes per-sample GPQA JSONL into counts by
+  status, answer format, and domain.
+- `benchmark/recommend_kernel_step.py` converts `profile_buckets.json` into one
+  concrete profile-backed next action if no candidate passes. Static FP8 is only
+  recommended when the `fp8_scaling` bucket is material; gated-conv fusion is only
+  recommended when the `gated_conv_state` bucket is material.
+- `scripts/run_decode_cost_campaign.sh` runs the constrained H200 campaign end to
+  end: FP8 profile capture, W4A16 GPTQ artifact validation, forced-Machete runs,
+  Marlin fallback if Machete fails/misses decode gates, aggregation, and final
+  candidate report. It deliberately does not run BitsAndBytes, does not combine W4
+  with FP8, and does not run scheduler/cache sweeps.
+
+Validation on historical results:
+
+| Run | ERS | TBT/TPOT mean | TBT/TPOT p50 | TBT/TPOT p95 | TTFT mean/p50/p95 | failures | decode tok/s |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `fp8_20260717-170633` | 64.80 | 2.83 | 2.75 | 3.61 | 92.6 / 57.0 / 250.4 | 0 | 239.6 |
+| `fp8_h200shape_cpu3_20260717-190204` | 65.29 | 2.87 | 2.77 | 3.52 | 84.3 / 60.0 / 205.5 | 0 | 239.5 |
+
+Historical crash analysis also works: `fp8_ngram_20260717-180653` has 278/420
+failures, all classified as `cuda_after_engine_crash` when paired with its server
+log, clustered mostly in elapsed minutes 1-5. This confirms the analyzer can separate
+server-crash cascades from ordinary HTTP/request errors.
+
+### W4A16 GPTQ / compressed-tensors preparation
+
+Added `recipes/w4a16_gptq_group128.yaml`:
+
+```yaml
+GPTQModifier:
+  block_size: 128
+  dampening_frac: 0.01
+  actorder: static
+  offload_hessians: true
+  ignore: [lm_head]
+  weights:
+    num_bits: 4
+    type: int
+    symmetric: true
+    strategy: group
+    group_size: 128
+```
+
+The first smoke uncovered a recipe bug: a top-level key not ending in `_stage`
+loads as **0 modifiers** and silently saves an unquantized model. Fixed by naming the
+stage `lfm2_w4a16_gptq_stage`; rerun initialized **1 modifier** and quantized the
+expected modules.
+
+Added `scripts/quantize_w4a16_gptq.py`, which:
+
+- loads `Lfm2ForCausalLM` via Transformers 5.10.1;
+- uses deterministic synthetic long-context calibration samples, avoiding external
+  calibration dataset downloads;
+- saves compressed-tensors weights.
+
+One-sample CPU smoke result:
+
+- input model: `hf_full/LFM2.5-1.2B-Instruct` (2.2 GiB);
+- output artifact: `artifacts/smoke-w4` (771 MiB);
+- `config.json` contains `quant_method: "compressed-tensors"`,
+  `format: "pack-quantized"`, `num_bits: 4`, `type: "int"`, `symmetric: true`,
+  `strategy: "group"`, `group_size: 128`, `ignore: ["lm_head"]`.
+
+This smoke is **not** an accuracy/performance candidate: it used one calibration
+sample and CPU execution only. It validates recipe wiring and artifact format.
+
+Notable GPTQ reconstruction-error signal from the smoke:
+
+- Attention projections were low-error in the smoke.
+- `conv.in_proj` and later-layer MLP `w1`/`w3` showed the largest reconstruction
+  errors.
+
+If W4 accuracy regresses, the first mixed-precision fallback should be:
+
+1. keep `model.layers.*.conv.in_proj` BF16;
+2. if still regressed, keep MLP `w1`/`w3` BF16 in the highest-error late layers;
+3. avoid changing attention first unless exact changed GPQA samples point there.
+
+Added configs:
+
+- `configs/w4a16_gptq_machete.env`: forces `--linear-backend=machete`.
+- `configs/w4a16_gptq_marlin.env`: forces `--linear-backend=marlin`.
+
+Local vLLM startup with the W4 smoke artifact confirms vLLM accepts the artifact
+metadata through model/config resolution (`quantization=compressed-tensors`,
+`linear_backend=machete` in the engine config), but fails before loading weights or
+selecting a kernel because CUDA device initialization is blocked by the driver.
+
+Backend-selection inspection from installed vLLM 0.22.1:
+
+- `compressed_tensors_wNa16.py` logs `Using <KernelName> for CompressedTensorsWNA16`
+  after `choose_mp_linear_kernel(...)`; this is the string to grep in H200 logs.
+- Candidate WNA16 order on CUDA is CutlassW4A8, Machete, AllSpark, Marlin, Conch,
+  Exllama.
+- For LFM2-sized W4A16 shapes on this non-H200 host, direct selector probing returns
+  `MarlinLinearKernel`. Machete's `can_implement` checks the current platform's real
+  device capability internally, so this host cannot prove H200 Machete eligibility.
+  On H200, run the forced `machete` config first; if it fails fast or does not log
+  Machete, run the forced `marlin` fallback.
+
+### Exact next run sequence on H200 / CUDA-13-capable box
+
+One-command campaign path:
+
+```bash
+TRACE=trace_grading_spec.jsonl WORKLOAD=spec W4_RUNS=3 \
+  bash scripts/run_decode_cost_campaign.sh
+```
+
+Outputs land under `results/decode_cost_campaign_<timestamp>/`, including
+`kernel_next_step.{txt,json}` from the FP8 profile and `candidate_report.{md,json}`
+from the selected W4 backend runs. If `candidate_report.md` says PASS, then and only
+then copy the validated W4 artifact into `submission/model`, build/push the Docker
+image, and submit `submission/docker-compose.w4a16-gptq.yml`.
+
+To include the local GPQA mirror accuracy gate in the same campaign:
+
+```bash
+TRACE=trace_grading_spec.jsonl WORKLOAD=spec W4_RUNS=3 DO_ACCURACY=1 \
+  bash scripts/run_decode_cost_campaign.sh
+```
+
+This runs `scripts/run_accuracy.sh fp8_h200shape ...`, then the selected W4 backend
+config, writes `accuracy_diff.{txt,json}` into the campaign directory, and passes
+that diff into `candidate_report.py`. Without `DO_ACCURACY=1`, the final report
+correctly remains `FAIL / INCOMPLETE` because accuracy parity is missing.
+
+Guarded packaging after a PASS report:
+
+```bash
+bash scripts/prepare_w4_submission.sh \
+  results/decode_cost_campaign_<timestamp>/candidate_report.json \
+  artifacts/lfm2-w4a16-gptq-g128 \
+  submission/docker-compose.w4a16-gptq.yml
+```
+
+This replaces `submission/model/*` with the validated W4 artifact. It deliberately
+allows the placeholder image tag during packaging because the tag is replaced at the
+Docker push/submission step; final compose validation without
+`--allow-placeholder-image` should be run after that replacement.
+
+Manual sequence:
+
+1. Profile matched FP8 baseline:
+
+```bash
+bash scripts/run_profile_capture.sh fp8_h200shape fp8_profile_spec
+```
+
+Inspect `results/fp8_profile_spec/torch_profile` for decode-step time split:
+GEMM kernels, FP8 scaling/reduction ops, ShortConv/state-update kernels, attention,
+and CPU/launch gaps. Do not start static/offline FP8 until this shows scaling/reduce
+overhead is material.
+
+The runner now also writes:
+
+```bash
+results/fp8_profile_spec/profile_buckets.txt
+results/fp8_profile_spec/profile_buckets.json
+```
+
+To re-run attribution manually:
+
+```bash
+python benchmark/analyze_profile_trace.py \
+  results/fp8_profile_spec/torch_profile \
+  --json-out results/fp8_profile_spec/profile_buckets.json
+python benchmark/recommend_kernel_step.py \
+  results/fp8_profile_spec/profile_buckets.json \
+  --json-out results/fp8_profile_spec/kernel_next_step.json
+```
+
+2. Export real W4 GPTQ artifact with more than smoke calibration:
+
+```bash
+source .venv-quant/bin/activate
+python scripts/quantize_w4a16_gptq.py \
+  --model LiquidAI/LFM2.5-1.2B-Instruct \
+  --output-dir artifacts/lfm2-w4a16-gptq-g128 \
+  --num-calibration-samples 256 \
+  --max-seq-length 2048
+```
+
+3. Test W4 backend selection and benchmark:
+
+```bash
+TRACE=trace_grading_spec.jsonl WORKLOAD=spec \
+  bash scripts/run_experiment.sh w4a16_gptq_machete
+grep -E "Using .*CompressedTensorsWNA16|linear_backend|Machete|Marlin" \
+  results/w4a16_gptq_machete_*/server.log
+python scripts/validate_w4_candidate.py \
+  --artifact artifacts/lfm2-w4a16-gptq-g128 \
+  --run-dir results/<exact_w4_run_dir>
+python benchmark/summarize_run.py results/w4a16_gptq_machete_*/results.jsonl
+python benchmark/analyze_failures.py results/w4a16_gptq_machete_*/results.jsonl \
+  --server-log results/w4a16_gptq_machete_*/server.log
+```
+
+If Machete is unavailable or slower, repeat with `w4a16_gptq_marlin`.
+
+For any promising backend, collect three clean runs and aggregate:
+
+```bash
+for i in 1 2 3; do
+  TRACE=trace_grading_spec.jsonl WORKLOAD=spec \
+    bash scripts/run_experiment.sh w4a16_gptq_machete
+done
+
+python benchmark/aggregate_runs.py \
+  results/w4a16_gptq_machete_<run1> \
+  results/w4a16_gptq_machete_<run2> \
+  results/w4a16_gptq_machete_<run3> \
+  --baseline-tbt-p50-ms 4.0 \
+  --baseline-failed-requests 4 \
+  --json-out results/w4a16_gptq_machete_3run_aggregate.json
+```
+
+4. Accuracy gate for any W4 candidate with >=15% matched decode improvement:
+
+- run the exact same GPQA/lm-eval setup used in Session 2 against FP8 baseline and W4;
+- compare exact changed samples;
+- group changes by task/domain, prompt length, answer format, and likely quantized
+  module family. If failures align with high-error conv/MLP modules, test the targeted
+  mixed-precision ignore list above.
+
+For the local GPQA helper:
+
+```bash
+time bash scripts/run_accuracy.sh fp8_h200shape gpqa_baseline
+time bash scripts/run_accuracy.sh w4a16_gptq_machete gpqa_candidate
+
+python benchmark/compare_accuracy.py \
+  --baseline results/<fp8_accuracy_run>/accuracy/gpqa.jsonl \
+  --candidate results/<w4_accuracy_run>/accuracy/gpqa.jsonl \
+  --candidate-modules all_linear_w4_g128_lm_head_bf16 \
+  --json-out results/<w4_run>/accuracy_diff.json
+```
+
+Final candidate gate report:
+
+```bash
+python benchmark/candidate_report.py \
+  --candidate w4a16_gptq_machete \
+  --runs \
+    results/w4a16_gptq_machete_<run1> \
+    results/w4a16_gptq_machete_<run2> \
+    results/w4a16_gptq_machete_<run3> \
+  --baseline-tbt-p50-ms 4.0 \
+  --baseline-failed-count 4 \
+  --accuracy-diff-json results/<w4_run>/accuracy_diff.json \
+  --docker-compose submission/docker-compose.w4a16-gptq.yml \
+  --json-out results/w4a16_gptq_machete_candidate_report.json \
+  --md-out results/w4a16_gptq_machete_candidate_report.md
+```
+
+Added `submission/docker-compose.w4a16-gptq.yml` as a guarded template only. It is
+not submission-ready until the H200 run proves backend selection, 3-run stability,
+failure parity, and accuracy parity.
+
+### Current status against the goal
+
+No new candidate passes the done criteria yet. The blocking reason is environmental,
+not experimental: this host cannot run vLLM/Torch CUDA 13 kernels. The single most
+promising concrete next step is to run W4A16 GPTQ compressed-tensors on the H200 with
+forced `machete` first and `marlin` fallback, because W4 is the only remaining
+mechanism with a plausible path from official TBT median 4 ms to 3.0-3.5 ms. Static
+FP8 and mixed precision remain gated on profiler evidence; no static-FP8 candidate
+config has been added because the required `fp8_scaling` hotspot evidence is not
+available on this host.
+
+## Session 5: local CUDA 12.6 runtime and feasible local experiments (2026-07-20)
+
+User requested using the current machine's CUDA/driver instead of keeping an extra
+venv. Local hardware/runtime:
+
+- GPU: RTX 3090, compute capability 8.6, 24 GiB.
+- Driver: 560.35.03, `nvidia-smi` reports CUDA 12.6.
+- Replaced the broken CUDA-13 `.venv` stack in-place with official CUDA-12.6-compatible
+  packages:
+  - `torch==2.7.1+cu126`
+  - `vllm==0.10.0+cu126`
+  - `transformers==4.57.6` (`transformers<5` required because vLLM 0.10.0 breaks
+    with Transformers 5 tokenizer API)
+  - `compressed-tensors==0.10.2`
+- Removed the extra `.venv-quant` and generated smoke/model copies to recover disk.
+
+Important limitation: this local stack is **not submission-equivalent**. The
+submission stack remains `vllm/vllm-openai:v0.22.1`/CUDA 13 on H200. vLLM 0.10.0
+does not expose the newer `fp8_per_tensor`, `--linear-backend`, `--profiler-config`,
+or `xxhash` prefix-cache hash options used by the official FP8/H200 path. It also
+falls back to the Transformers backend for `Lfm2ForCausalLM`, with a warning that
+performance may not be optimal. Therefore the numbers below are valid local
+diagnostics only; they cannot prove official completion.
+
+Added local-only configs:
+
+- `configs/local_cu126_bf16.env`
+- `configs/local_cu126_legacy_fp8.env`
+
+Also fixed `benchmark/replay_trace.py` / run scripts to separate:
+
+- request model name (`--model`, e.g. served alias `LFM2.5-1.2B-Instruct`);
+- tokenizer repo/path (`--tokenizer-model`, e.g. `LiquidAI/LFM2.5-1.2B-Instruct`).
+
+This was required because using the served alias as a HF tokenizer ID caused:
+
+```text
+RepositoryNotFoundError: LFM2.5-1.2B-Instruct ... not a valid model identifier
+```
+
+### Local trace results: CUDA 12.6 / RTX 3090 / vLLM 0.10.0
+
+Both runs used `trace_grading_spec.jsonl`, `--workload spec`, `max_model_len=5120`,
+`max_num_seqs=8`, `max_num_batched_tokens=512`, prefix caching on, log stats/access
+logs off, and no `xxhash` because vLLM 0.10.0 only supports builtin/sha256 variants.
+
+| Run | Quantization | ERS | TBT mean | TBT p50 | TBT p95 | TTFT p50 | TTFT p95 | Failures | Notes |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---|
+| `local_cu126_bf16_20260720-060307` | none/BF16 | 55.51 | 5.34 | 5.17 | 7.36 | 40.49 | 71.99 | 0 | Local baseline; vLLM Transformers backend fallback |
+| `local_cu126_legacy_fp8_20260720-060937` | legacy `fp8` | 55.37 | 5.45 | 5.08 | 7.86 | 40.85 | 74.82 | 0 | No decode win; rejected as local path |
+
+Conclusion from this local experiment: legacy `--quantization=fp8` on the only
+available CUDA-12.6 vLLM wheel does **not** reduce decode cost versus BF16 on this
+machine. This reinforces the earlier project rule not to replace official
+`fp8_per_tensor` with legacy `fp8`.
+
+VRAM note: first BF16 run's VRAM monitor could not identify the vLLM 0.10 process
+name (`nvidia-smi` showed `[Not Found]`), so it falsely classified memory as
+`other_tenant`. `scripts/run_experiment.sh` now falls back to the highest-memory GPU
+compute process when `VLLM::EngineCore` is not visible. The legacy-FP8 run after the
+fix recorded peak VRAM ~17.3 GiB.
+
+### Local accuracy smoke: GPQA mirror limit 20
+
+This is a small coherence/regression smoke only, not the official accuracy gate.
+
+| Run | Correct | Errors | Unparsed | Changed vs BF16 | Regressions | Fixes |
+|---|---:|---:|---:|---:|---:|---:|
+| `local_cu126_bf16_gpqa20_20260720-061730` | 3/20 | 0 | 14 | — | — | — |
+| `local_cu126_legacy_fp8_gpqa20_20260720-061931` | 3/20 | 0 | 14 | 6 | 1 | 1 |
+
+The high unparsed count makes this a weak accuracy signal; it mainly confirms that
+the local legacy-FP8 path is not an obvious quality win and has no performance win.
+
+### W4/static-FP8 status on local CUDA 12.6
+
+- W4 compressed-tensors export cannot be done safely in the single local `.venv`:
+  `llmcompressor==0.12.0` dry-run would replace the working CUDA-12.6 stack with
+  Torch CUDA 13 and Transformers 5 again.
+- vLLM 0.10.0 lacks `--linear-backend`, so it cannot confirm forced Machete/Marlin
+  selection as required by the goal.
+- vLLM 0.10.0 lacks `--profiler-config` / profile endpoints, so the FP8 baseline
+  cannot be bucket-profiled locally using the vLLM 0.22 workflow.
+
+Current concrete next step remains unchanged: run the prepared H200 campaign on a
+CUDA-13-capable H200 machine. Local CUDA 12.6 is useful for catching script/runtime
+bugs, and did catch the tokenizer-model bug, but it cannot produce the
+profiler-backed submission evidence required by the goal.

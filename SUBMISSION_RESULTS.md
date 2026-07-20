@@ -168,6 +168,17 @@ Interpretation:
 4. **Local scheduler optima do not necessarily transfer to the official H200 environment.** Reducing `max_num_batched_tokens` from 512 to 256 caused a clear regression.
 5. **Future work should be mechanism-driven rather than a blind parameter sweep.** The next high-value directions are profiling the FP8 decode step, evaluating a genuinely faster online INT4/TorchAO path, testing mixed precision if full INT4 is unstable, and considering FP8 KV cache or profile-guided CUDA graph/compile changes only when measurements identify corresponding bottlenecks.
 
+Session 4/5 update: the prepared mechanism-driven path is W4A16 GPTQ with
+compressed-tensors, group_size=128, symmetric weights, `lm_head` unquantized,
+and forced Machete first / Marlin fallback. The repository now contains
+validators and `scripts/run_decode_cost_campaign.sh` to require backend proof,
+3 clean spec runs, no additional failures, and accuracy parity before a W4
+submission can be packaged. A local CUDA 12.6/vLLM 0.10.0 diagnostic run was
+also performed on RTX 3090; legacy `--quantization=fp8` did not improve decode
+versus BF16 and remains rejected. These local CUDA 12.6 numbers are not
+official evidence because they use a different vLLM version and Transformers
+backend fallback.
+
 ## Current best submission
 
 ```text
@@ -192,3 +203,13 @@ Near-term target:   approximately 3.0-3.5 ms
 ```
 
 Reaching that range without increasing TTFT tails, failure count, or accuracy drop would provide a technically justified path from the current 60.20 score toward the mid-to-high 60s.
+
+Concrete next run:
+
+```bash
+TRACE=trace_grading_spec.jsonl WORKLOAD=spec W4_RUNS=3 DO_ACCURACY=1 \
+  bash scripts/run_decode_cost_campaign.sh
+```
+
+If no candidate passes, use `kernel_next_step.json` from that campaign's FP8
+profile as the required concrete kernel-level next step.

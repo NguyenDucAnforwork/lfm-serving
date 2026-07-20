@@ -16,17 +16,32 @@ what was tried; this file is the how-to-run guide.
 ```
 scripts/start_server.sh      # starts the vLLM server for LOCAL DEV/experiments only (see below)
 scripts/run_experiment.sh    # orchestrates one experiment: start server, replay trace, log, stop
+scripts/run_profile_capture.sh       # H200/CUDA-13 FP8 baseline profile capture
+scripts/run_decode_cost_campaign.sh  # constrained H200 decode-cost campaign: profile FP8, test W4, report
+scripts/run_accuracy.sh              # config-based GPQA mirror run with per-sample JSONL
 scripts/vram_monitor.sh      # polls nvidia-smi for one PID + total GPU usage; kills server past the VRAM limit
 scripts/rss_monitor.sh       # polls total RSS across the server's process tree (checks the 8GB grading RAM limit)
 scripts/wait_for_idle_gpu.sh # waits (read-only) until no other tenant process is using the GPU
 scripts/stop_server.sh       # stops any server this project started
 scripts/log_experiment.py    # appends one row to EXPERIMENTS.md's summary table
+scripts/quantize_w4a16_gptq.py       # exports W4A16 GPTQ compressed-tensors artifact
+scripts/validate_w4_candidate.py     # checks W4 artifact/run constraints and Marlin/Machete backend evidence
+scripts/validate_submission_compose.py # checks compose flags before packaging/submission
+scripts/prepare_w4_submission.sh     # guarded W4 packaging after candidate_report PASS
 benchmark/trace_utils.py     # loads the trace, generates token-length-matched synthetic prompts (strong/weak overlap modes)
 benchmark/replay_trace.py    # replays the trace against a running server, records per-request metrics
 benchmark/compute_ers.py     # ERS scoring model + summary stats (also importable as a library)
+benchmark/summarize_run.py            # ERS/TBT/TTFT/throughput/failure summary JSON
+benchmark/analyze_profile_trace.py    # Chrome trace bucket attribution: GEMM, FP8 scaling, conv/state, attention, launch
+benchmark/analyze_failures.py         # failure clustering by type/turn/length/concurrency/time
+benchmark/compare_accuracy.py         # exact per-sample accuracy diff grouping
+benchmark/candidate_report.py         # final PASS vs FAIL/INCOMPLETE report for candidate gates
 configs/*.env                # one file per experiment; consumed by start_server.sh
 configs/best.env             # RTX-3090-validated winning config (BF16, no quantization)
 configs/fp8_h200shape.env    # FP8 + exact H200 submission shape, locally validated (BEST)
+configs/w4a16_gptq_machete.env # H200 W4A16 GPTQ candidate, forced Machete
+configs/w4a16_gptq_marlin.env  # H200 W4A16 GPTQ fallback, forced Marlin
+configs/local_cu126_*.env      # local-only CUDA 12.6/vLLM 0.10 diagnostics, not submission-equivalent
 configs/submission_h200.env  # H200 candidate profile, annotated assumptions -- see EXPERIMENTS.md
 results/<run>/               # results.jsonl, results.csv, summary.json, server.log, vram_samples.csv, other_tenant_peak_mib.txt, rss_peak_kb.txt per run
 results/accuracy/             # lm-eval accuracy comparison outputs (BF16 vs FP8)
@@ -34,6 +49,7 @@ Dockerfile                    # submission image: bakes the model, installs xxha
 submission/model/             # dereferenced model weights, baked into the image (not a symlink)
 submission/docker-compose.safe-bf16.yml  # C1: submit first, zero accuracy risk
 submission/docker-compose.fp8.yml        # C2: +9-10pp ERS, FULLY CLEARED (4 accuracy checks incl. the literal official GPQA-diamond gate)
+submission/docker-compose.w4a16-gptq.yml # guarded W4 template; submit only after candidate_report PASS
 next_step.md                  # 2-day technique portfolio / execution plan (source of the T1-T8 naming used throughout)
 SUBMISSION_PLAN.md            # human next steps: build/push/submit, leaderboard A/B order, final-5 guidance
 ```
@@ -46,10 +62,19 @@ hardcode flags directly, matching the portal's required format.
 
 ## Environment
 
-- Isolated venv at `.venv` (NOT the shared `/venv/main`) with `vllm==0.22.1`,
-  which pins `torch==2.11.0` -- installing it into the shared venv would have
-  downgraded torch for whatever else runs on this box. `/venv/main` is
-  untouched.
+- Isolated venv at `.venv` (NOT the shared `/venv/main`). Two runtime tracks
+  matter:
+  - **Submission/H200 track:** `vllm/vllm-openai:v0.22.1` with CUDA 13, used
+    by `Dockerfile` and the official FP8 submission. This is the authoritative
+    target for any final candidate.
+  - **Current local debug track:** this dev box has driver `560.35.03`
+    (`nvidia-smi` CUDA 12.6), so `.venv` was adjusted in-place to
+    `vllm==0.10.0+cu126`, `torch==2.7.1+cu126`, `transformers==4.57.6`.
+    This lets the RTX 3090 run local smoke/diagnostic experiments, but it is
+    **not submission-equivalent**: vLLM 0.10.0 lacks `fp8_per_tensor`,
+    `--linear-backend`, `--profiler-config`, and `xxhash` prefix hashing, and
+    LFM2 falls back to the Transformers backend. See `EXPERIMENTS.md`
+    "Session 5".
 - Model cache: `HF_HOME=/workspace/.hf_home` (shared HF cache on this box).
 - This is a shared GPU instance; scripts avoid touching other users'
   processes and only manage PIDs they themselves started. **In practice this
@@ -70,13 +95,21 @@ this environment on a fresh clone (CUDA-capable GPU, `uv` installed):
 ```bash
 cd lfm-serving
 
-# 1. Main serving venv (vLLM + everything scripts/start_server.sh needs)
+# 1a. Main serving venv for the H200/submission-equivalent stack
 uv venv .venv --python 3.12
 source .venv/bin/activate
 uv pip install vllm==0.22.1      # pins torch==2.11.0; installs matching CUDA build
 uv pip install xxhash            # needed for PREFIX_CACHE_HASH_ALGO=xxhash (see EXPERIMENTS.md near-miss note)
 # Optional, only needed to re-run the rejected T2/experimental quantization paths:
 uv pip install bitsandbytes torchao
+
+# 1b. If you are on this current RTX 3090 / driver 560 / CUDA 12.6 box instead,
+#     do NOT create another venv; install a local-debug-compatible stack in .venv:
+uv pip install --python .venv/bin/python \
+  'https://github.com/vllm-project/vllm/releases/download/v0.10.0/vllm-0.10.0+cu126-cp38-abi3-manylinux1_x86_64.whl' \
+  --extra-index-url https://download.pytorch.org/whl/cu126
+uv pip install --python .venv/bin/python 'transformers>=4.53.2,<5' datasets
+# This local stack is only for smoke/diagnostics; do not use it as final H200 evidence.
 
 # 2. Accuracy-eval venv (separate on purpose -- avoids any dependency clash with vLLM)
 uv venv .venv-eval --python 3.12
@@ -138,12 +171,12 @@ curl -N http://127.0.0.1:8000/v1/chat/completions \
 
 `scripts/run_experiment.sh <config_name>` starts the server from
 `configs/<config_name>.env`, waits for readiness, monitors VRAM (auto-kills
-the server if it crosses `VRAM_LIMIT_MIB`, default 7000 MiB), replays
-`trace_grading_public.jsonl` in full, stops the server, and writes everything
-to `results/<config_name>_<timestamp>/`:
+the server if it crosses `VRAM_LIMIT_MIB`, default 7000 MiB), replays the
+selected trace in full, stops the server, and writes everything to
+`results/<config_name>_<timestamp>/`:
 
 ```bash
-bash scripts/run_experiment.sh baseline
+TRACE=trace_grading_spec.jsonl WORKLOAD=spec bash scripts/run_experiment.sh fp8_h200shape
 python3 scripts/log_experiment.py results/baseline_<timestamp> --decision "KEEP — ..."
 ```
 
@@ -153,6 +186,44 @@ To just replay the trace against a server you started yourself:
 python3 benchmark/replay_trace.py --trace trace_grading_public.jsonl --name my_run --verbose
 python3 benchmark/compute_ers.py results/my_run/results.jsonl
 ```
+
+When `--model` is a served alias, pass the tokenizer repo separately:
+
+```bash
+python3 benchmark/replay_trace.py \
+  --trace trace_grading_spec.jsonl \
+  --workload spec \
+  --model LFM2.5-1.2B-Instruct \
+  --tokenizer-model LiquidAI/LFM2.5-1.2B-Instruct \
+  --name my_spec_run --verbose
+```
+
+## Decode-cost campaign / W4 candidate
+
+The current official target is to reduce S2's TBT median from 4ms toward
+3.0-3.5ms without increasing failures or accuracy drop. The prepared H200
+campaign is intentionally mechanism-driven:
+
+```bash
+TRACE=trace_grading_spec.jsonl WORKLOAD=spec W4_RUNS=3 DO_ACCURACY=1 \
+  bash scripts/run_decode_cost_campaign.sh
+```
+
+It profiles the matched FP8 baseline, validates/uses a W4A16 GPTQ
+compressed-tensors artifact, tests forced Machete first with Marlin fallback,
+aggregates 3 clean runs, runs GPQA mirror diffing, and writes
+`candidate_report.{md,json}`. A W4 submission is allowed only if that report
+says `PASS`; then use:
+
+```bash
+bash scripts/prepare_w4_submission.sh \
+  results/decode_cost_campaign_<timestamp>/candidate_report.json \
+  artifacts/lfm2-w4a16-gptq-g128 \
+  submission/docker-compose.w4a16-gptq.yml
+```
+
+Do not use BitsAndBytes and do not combine W4 with `fp8_per_tensor`; the
+validators reject both.
 
 ## How the benchmark works (and why)
 
@@ -344,6 +415,22 @@ comfortably.
 Full reasoning, every experiment (including the crashes and rejections), and
 the complete session-2 table are in `EXPERIMENTS.md` "Session 2".
 
+### Session 4/5: decode-cost campaign prep and local CUDA 12.6 diagnostics
+
+- Official baseline for the new decode-cost goal is `SUBMISSION_RESULTS.md`
+  S2: FP8 per-tensor, ERS 60.20, TBT median 4ms, failed_count 4,
+  accuracy_drop 0.
+- Added H200 campaign tooling for profiler-backed W4A16 GPTQ
+  compressed-tensors experiments and guarded submission packaging.
+- Current dev host can run CUDA 12.6 locally with `vllm==0.10.0+cu126`, but
+  that stack is not submission-equivalent. Local diagnostics on
+  `trace_grading_spec.jsonl`:
+  - BF16: ERS 55.51, TBT mean/p50/p95 5.34/5.17/7.36ms, 0 failures.
+  - legacy `--quantization=fp8`: ERS 55.37, TBT mean/p50/p95
+    5.45/5.08/7.86ms, 0 failures.
+  Legacy FP8 is therefore rejected locally; the prepared H200 W4 campaign
+  remains the next real decode-cost step.
+
 ## Submission packaging (prepared, not executed)
 
 **The official BTC rules fix the submission format**: the portal's
@@ -379,6 +466,12 @@ anti-cheat rules, ruling out a runtime HF download).
   of the official 0.10 threshold). Same as C1 plus
   **`--quantization=fp8_per_tensor`** (not the legacy `--quantization=fp8`,
   which produces gibberish on this model — see "Key results" above).
+- `submission/docker-compose.w4a16-gptq.yml` — guarded W4A16 GPTQ
+  compressed-tensors template only. Do not submit it until
+  `benchmark/candidate_report.py` says PASS after 3 clean H200/spec runs,
+  backend logs prove Machete or Marlin for `CompressedTensorsWNA16`, and
+  accuracy diff is non-negative. Use `scripts/prepare_w4_submission.sh` to
+  populate `submission/model` only after that PASS report.
 
 **All numeric values above (except `max_model_len`/`gpu_memory_utilization`
 choices, which are RTX-3090-informed but H200-untested) are reasoned

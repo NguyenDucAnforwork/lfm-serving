@@ -220,7 +220,7 @@ async def run_benchmark(args) -> list[dict]:
     from transformers import AutoTokenizer
 
     os.environ.setdefault("HF_HOME", args.hf_home)
-    tokenizer = AutoTokenizer.from_pretrained(args.model)
+    tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_model)
     shared_prefix_tokens = None if args.prefix_overlap == "strong" else args.weak_prefix_tokens
     prompt_builder = PromptBuilder(tokenizer, seed=args.seed, shared_prefix_tokens=shared_prefix_tokens)
 
@@ -277,6 +277,12 @@ def main():
     ap.add_argument("--trace", default="/workspace/lfm-serving/trace_grading_public.jsonl")
     ap.add_argument("--base-url", default="http://127.0.0.1:8000")
     ap.add_argument("--model", default="LiquidAI/LFM2.5-1.2B-Instruct")
+    ap.add_argument(
+        "--tokenizer-model",
+        default=None,
+        help="Tokenizer repo/path. Defaults to --model; set separately when "
+             "--model is a served alias such as LFM2.5-1.2B-Instruct.",
+    )
     ap.add_argument("--hf-home", default="/workspace/.hf_home")
     ap.add_argument("--out-dir", default=None, help="Directory for results; default results/<timestamp>")
     ap.add_argument("--name", default=None, help="Experiment name; used in default out-dir and EXPERIMENTS.md")
@@ -309,6 +315,8 @@ def main():
     ap.add_argument("--no-ignore-eos", dest="ignore_eos", action="store_false")
     ap.add_argument("--verbose", action="store_true")
     args = ap.parse_args()
+    if args.tokenizer_model is None:
+        args.tokenizer_model = args.model
 
     ts = time.strftime("%Y%m%d-%H%M%S")
     name = args.name or ts
@@ -316,7 +324,10 @@ def main():
     out_jsonl = out_dir / "results.jsonl"
     out_csv = out_dir / "results.csv"
 
-    print(f"Running trace replay: trace={args.trace} model={args.model} base_url={args.base_url}")
+    print(
+        f"Running trace replay: trace={args.trace} model={args.model} "
+        f"tokenizer_model={args.tokenizer_model} base_url={args.base_url}"
+    )
     print(f"  prefix_overlap={args.prefix_overlap}" + (f" (shared_prefix_tokens={args.weak_prefix_tokens})" if args.prefix_overlap == "weak" else " (full body shared per conv_id)"))
     t0 = time.perf_counter()
     results = asyncio.run(run_benchmark(args))

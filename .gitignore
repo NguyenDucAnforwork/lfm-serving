@@ -1,10 +1,16 @@
 # Virtual environments (regenerate via README "Reproduce from scratch")
 .venv/
 .venv-eval/
+.venv-quant/
 
 # Model weights (2.2GB, regenerable from the HF Hub -- see README bootstrap)
 submission/model/*
 !submission/model/.gitkeep
+hf_full/
+hf_meta/
+artifacts/
+.trash_local/
+results/local_cu126_*/
 
 # Python
 __pycache__/

@@ -28,6 +28,20 @@ Before pushing, fill in the real tag in both compose files (currently
 repo **public** on Docker Hub (private images can't be pulled by the grading
 system).
 
+For a future W4A16 GPTQ submission, do **not** copy weights into
+`submission/model/` manually. First run the H200 campaign and require
+`candidate_report.json` to pass, then use:
+
+```bash
+bash scripts/prepare_w4_submission.sh \
+  results/decode_cost_campaign_<timestamp>/candidate_report.json \
+  artifacts/lfm2-w4a16-gptq-g128 \
+  submission/docker-compose.w4a16-gptq.yml
+```
+
+That script validates the W4 artifact and compose flags before replacing the
+Docker build context.
+
 ## 2. Submit order (tie-break rule #4 favors earlier submissions)
 
 1. **Submit `submission/docker-compose.safe-bf16.yml` FIRST**, as early as
@@ -62,6 +76,11 @@ system).
      show comfortable headroom, a higher value could allow more KV cache /
      concurrency margin. Do not push this past ~0.85 without a way to
      observe real peak VRAM on H200.
+   - c. **W4A16 GPTQ compressed-tensors only after campaign PASS.** The new
+     decode-cost target is S2's official TBT median 4ms -> 3.0-3.5ms. Run:
+     `TRACE=trace_grading_spec.jsonl WORKLOAD=spec W4_RUNS=3 DO_ACCURACY=1 bash scripts/run_decode_cost_campaign.sh`.
+     Submit `submission/docker-compose.w4a16-gptq.yml` only if the generated
+     `candidate_report.md` says PASS.
 
 ## 3. Final-5 selection (after the online round ends)
 
@@ -81,6 +100,10 @@ system).
   with a hard CUDA error, not just a config warning.
 - Do not include any variant using `--quantization bitsandbytes` (W4) — it
   measured *worse* than the unquantized baseline (T2, EXPERIMENTS.md).
+- Do not include W4A16 GPTQ unless backend logs prove Machete or Marlin for
+  `CompressedTensorsWNA16`, 3 clean H200/spec runs meet TBT/failure gates, and
+  accuracy diff is non-negative. The repository now has scripts to enforce
+  those gates.
 
 ## 4. Unresolved risks (carry into the decision)
 
@@ -128,6 +151,9 @@ system).
 ## 5. Quick reference: what NOT to do
 
 - Do not use `--quantization=fp8` (legacy name) — gibberish output, verified.
+- Do not treat local CUDA 12.6 / vLLM 0.10.0 diagnostics as official evidence.
+  They are useful for smoke tests only; final candidates require the H200/CUDA
+  13 submission stack.
 - Do not enable any `--spec-method` — hard CUDA crash under load, verified.
 - Do not use `--quantization=bitsandbytes` — measured worse than baseline.
 - Do not set `--max-num-partial-prefills` > 1 — vLLM refuses to start.

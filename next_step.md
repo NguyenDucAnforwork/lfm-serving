@@ -1,5 +1,19 @@
 # 2-Day Execution Plan (v2) — LFM2.5-1.2B serving optimization
 
+> Status update, 2026-07-20: this plan is historical. The current decode-cost
+> work is documented in `EXPERIMENTS.md` Session 4/5. The actionable path is
+> now the constrained H200 campaign:
+>
+> ```bash
+> TRACE=trace_grading_spec.jsonl WORKLOAD=spec W4_RUNS=3 DO_ACCURACY=1 \
+>   bash scripts/run_decode_cost_campaign.sh
+> ```
+>
+> Local CUDA 12.6 diagnostics are available via `configs/local_cu126_*.env`,
+> but they are smoke-only and not submission-equivalent. Do not resurrect
+> BitsAndBytes W4 or scheduler/cache sweeps from this old plan unless new
+> profiler evidence justifies them.
+
 Work order for the executing agent. Self-contained: read top-to-bottom before running
 anything. Supersedes v1 of this file. Prior findings live in `EXPERIMENTS.md` — read
 "Notes and decisions", "GPU contention", "H200 submission profile" first.

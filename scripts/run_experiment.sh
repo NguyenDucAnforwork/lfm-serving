@@ -5,6 +5,9 @@
 # under results/<run_id>/.
 #
 # Usage: scripts/run_experiment.sh <config_name> [extra replay_trace.py args]
+#
+# Optional env:
+#   TRACE=trace_grading_spec.jsonl WORKLOAD=spec MODEL_NAME=LFM2.5-1.2B-Instruct TOKENIZER_MODEL=LiquidAI/LFM2.5-1.2B-Instruct
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -28,6 +31,10 @@ set -a
 source "$CONFIG_FILE"
 set +a
 export LOG_FILE="$OUT_DIR/server.log"
+TRACE="${TRACE:-trace_grading_public.jsonl}"
+WORKLOAD="${WORKLOAD:-legacy}"
+MODEL_NAME="${MODEL_NAME:-${SERVED_MODEL_NAME:-$MODEL}}"
+TOKENIZER_MODEL="${TOKENIZER_MODEL:-$MODEL}"
 
 bash "$SCRIPT_DIR/start_server.sh" &
 SERVER_PID=$!
@@ -53,6 +60,10 @@ fi
 sleep 2
 ENGINE_PID=$(nvidia-smi --query-compute-apps=pid,process_name --format=csv,noheader 2>/dev/null \
   | awk -F',' '/VLLM::EngineCore/{gsub(/ /,"",$1); print $1}' | tail -1)
+if [[ -z "$ENGINE_PID" ]]; then
+  ENGINE_PID=$(nvidia-smi --query-compute-apps=pid,used_memory --format=csv,noheader,nounits 2>/dev/null \
+    | awk -F',' '{gsub(/ /,"",$1); gsub(/ /,"",$2); if ($2+0 > best) {best=$2+0; pid=$1}} END {if (pid) print pid}')
+fi
 echo "engine core pid: ${ENGINE_PID:-unknown}"
 
 bash "$SCRIPT_DIR/vram_monitor.sh" "$ENGINE_PID" "$OUT_DIR/vram_samples.csv" "${VRAM_LIMIT_MIB:-7000}" "$SERVER_PID" &
@@ -68,6 +79,10 @@ fi
 # shellcheck disable=SC1091
 source "$PROJECT_DIR/.venv/bin/activate"
 python3 "$PROJECT_DIR/benchmark/replay_trace.py" \
+  --trace "$PROJECT_DIR/$TRACE" \
+  --workload "$WORKLOAD" \
+  --model "$MODEL_NAME" \
+  --tokenizer-model "$TOKENIZER_MODEL" \
   --name "$RUN_ID" --out-dir "$OUT_DIR" --verbose "$@" 2>&1 | tee "$OUT_DIR/replay.log"
 REPLAY_STATUS=${PIPESTATUS[0]}
 
@@ -133,5 +148,22 @@ print(peak)
 fi
 
 echo "Results dir: $OUT_DIR"
+
+if [[ -f "$OUT_DIR/results.jsonl" ]]; then
+  python3 "$PROJECT_DIR/benchmark/summarize_run.py" "$OUT_DIR/results.jsonl" \
+    > "$OUT_DIR/summary_ext.json" 2>/dev/null || true
+  python3 "$PROJECT_DIR/benchmark/analyze_failures.py" "$OUT_DIR/results.jsonl" \
+    --server-log "$OUT_DIR/server.log" > "$OUT_DIR/failure_analysis.txt" 2>/dev/null || true
+fi
+
+if [[ "${QUANTIZATION:-}" == "compressed-tensors" ]]; then
+  MODEL_PATH="$MODEL"
+  if [[ "$MODEL_PATH" != /* ]]; then
+    MODEL_PATH="$PROJECT_DIR/$MODEL_PATH"
+  fi
+  python3 "$PROJECT_DIR/scripts/validate_w4_candidate.py" \
+    --artifact "$MODEL_PATH" \
+    --run-dir "$OUT_DIR" > "$OUT_DIR/w4_validation.json" 2>/dev/null || true
+fi
 
 exit "$REPLAY_STATUS"

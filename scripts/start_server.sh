@@ -15,7 +15,8 @@
 #   PERFORMANCE_MODE, PREFIX_CACHE_HASH_ALGO, DISABLE_LOG_STATS, DISABLE_ACCESS_LOG,
 #   QUANTIZATION, KV_CACHE_DTYPE, SPEC_METHOD, SPEC_TOKENS, SPEC_MODEL,
 #   SPECULATIVE_CONFIG, COMPILATION_CONFIG, ENFORCE_EAGER, MAX_NUM_PARTIAL_PREFILLS,
-#   BLOCK_SIZE, CPU_PIN, EXTRA_VLLM_ARGS, VLLM_VENV, LOG_FILE
+#   BLOCK_SIZE, LINEAR_BACKEND, PROFILER_CONFIG, CPU_PIN, EXTRA_VLLM_ARGS,
+#   VLLM_VENV, LOG_FILE
 #
 # The QUANTIZATION/KV_CACHE_DTYPE/SPEC_*/COMPILATION_CONFIG/MAX_NUM_PARTIAL_PREFILLS/
 # BLOCK_SIZE/CPU_PIN knobs are under evaluation this session (see next_step.md T1-T8);
@@ -59,6 +60,8 @@ COMPILATION_CONFIG="${COMPILATION_CONFIG:-}"            # raw JSON passed to --c
 ENFORCE_EAGER="${ENFORCE_EAGER:-0}"                     # 1 = pass --enforce-eager (T4 diagnostic: measures CUDA-graph benefit)
 MAX_NUM_PARTIAL_PREFILLS="${MAX_NUM_PARTIAL_PREFILLS:-}" # empty = vllm default (1) (T7)
 BLOCK_SIZE="${BLOCK_SIZE:-}"                            # empty = vllm default (T7)
+LINEAR_BACKEND="${LINEAR_BACKEND:-}"                    # empty = vLLM auto; or machete/marlin/triton/etc. for backend-forcing experiments
+PROFILER_CONFIG="${PROFILER_CONFIG:-}"                  # raw JSON passed to --profiler-config
 CPU_PIN="${CPU_PIN:-}"                                  # e.g. "0-2" = exec under `taskset -c 0-2` (emulates the 3-CPU-core grading env)
 VLLM_VENV="${VLLM_VENV:-$PROJECT_DIR/.venv}"
 LOG_FILE="${LOG_FILE:-}"   # empty = log to stdout (container-friendly); set to a path for local dev
@@ -152,6 +155,14 @@ if [[ -n "$BLOCK_SIZE" ]]; then
   ARGS+=(--block-size "$BLOCK_SIZE")
 fi
 
+if [[ -n "$LINEAR_BACKEND" ]]; then
+  ARGS+=(--linear-backend "$LINEAR_BACKEND")
+fi
+
+if [[ -n "$PROFILER_CONFIG" ]]; then
+  ARGS+=(--profiler-config "$PROFILER_CONFIG")
+fi
+
 if [[ -n "${EXTRA_VLLM_ARGS:-}" ]]; then
   # shellcheck disable=SC2206
   EXTRA_ARR=($EXTRA_VLLM_ARGS)
@@ -168,6 +179,7 @@ echo "  quantization=${QUANTIZATION:-<none>} kv_cache_dtype=${KV_CACHE_DTYPE:-<d
 echo "  spec_method=${SPEC_METHOD:-<none>} spec_tokens=${SPEC_TOKENS:-} speculative_config=${SPECULATIVE_CONFIG:-<none>}"
 echo "  compilation_config=${COMPILATION_CONFIG:-<default>} enforce_eager=$ENFORCE_EAGER"
 echo "  max_num_partial_prefills=${MAX_NUM_PARTIAL_PREFILLS:-<default>} block_size=${BLOCK_SIZE:-<default>}"
+echo "  linear_backend=${LINEAR_BACKEND:-<auto>} profiler_config=${PROFILER_CONFIG:-<none>}"
 echo "  cpu_pin=${CPU_PIN:-<none>} extra_args=${EXTRA_VLLM_ARGS:-<none>}"
 echo "  log=${LOG_FILE:-<stdout>}"
 

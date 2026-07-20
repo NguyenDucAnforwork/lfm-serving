@@ -1,0 +1,50 @@
+# W4A16 GPTQ compressed-tensors candidate template.
+#
+# DO NOT SUBMIT until EXPERIMENTS.md has a matching H200 validation block with:
+#   - backend log showing Machete or Marlin for CompressedTensorsWNA16;
+#   - >=3 clean trace_grading_spec runs;
+#   - TBT <=3.5 ms or >=15% matched decode improvement;
+#   - no extra failures and no GPQA/lm-eval accuracy penalty.
+#
+# Build requirement: copy the validated compressed-tensors artifact produced by
+# scripts/quantize_w4a16_gptq.py into submission/model before building the
+# Docker image. The artifact must have lm_head ignored/unquantized and
+# quantization_config format=pack-quantized, quant_method=compressed-tensors,
+# weights num_bits=4, symmetric=true, group_size=128.
+#
+# BEFORE SUBMITTING: replace <DOCKERHUB_USER>/lfm-serving:w4a16-gptq with the
+# real pushed image tag.
+services:
+  model:
+    image: <DOCKERHUB_USER>/lfm-serving:w4a16-gptq
+    entrypoint:
+      - python3 #Don't change this to vllm-server
+      - -m #Don't change this to vllm-server
+      - vllm.entrypoints.openai.api_server #Don't change this to vllm-server
+    command:
+      - --model=/model #Don't change this to vllm-server
+      - --served-model-name=LFM2.5-1.2B-Instruct #Don't change this to vllm-server
+      - --host=0.0.0.0 #Don't change this to vllm-server
+      - --port=8000 #Don't change this to vllm-server
+      - --dtype=bfloat16
+      - --quantization=compressed-tensors
+      - --linear-backend=machete
+      - --max-model-len=5120
+      - --gpu-memory-utilization=0.70
+      - --tensor-parallel-size=1
+      - --max-num-seqs=8
+      - --max-num-batched-tokens=512
+      - --enable-prefix-caching
+      - --prefix-caching-hash-algo=xxhash
+      - --disable-log-stats
+      - --disable-uvicorn-access-log
+    ports:
+      - "8000:8000"
+    shm_size: "2g"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

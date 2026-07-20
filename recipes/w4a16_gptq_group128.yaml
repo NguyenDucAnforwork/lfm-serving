@@ -1,0 +1,23 @@
+lfm2_w4a16_gptq_stage:
+  quantization_modifiers:
+    GPTQModifier:
+      block_size: 128
+      dampening_frac: 0.01
+      # "static" is an alias for weight-order GPTQ: it improves calibration
+      # without adding a runtime g_idx activation permutation.
+      actorder: static
+      offload_hessians: true
+      ignore:
+        - lm_head
+      config_groups:
+        group_0:
+          targets:
+            - Linear
+          input_activations: null
+          output_activations: null
+          weights:
+            num_bits: 4
+            type: int
+            symmetric: true
+            strategy: group
+            group_size: 128

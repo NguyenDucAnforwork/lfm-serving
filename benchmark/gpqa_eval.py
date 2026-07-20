@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import json
 import re
 import sys
@@ -33,6 +34,16 @@ def extract_boxed_letter(text: str) -> str | None:
     # fallback: look for a bare "answer is X" / lone letter near the end
     m = re.search(r"\b([A-D])\b(?!.*\b[A-D]\b)", text.strip()[-40:])
     return m.group(1) if m else None
+
+
+def answer_format(text: str | None) -> str:
+    if not text:
+        return "empty"
+    if re.search(r"\\boxed\{[A-D]\}", text):
+        return "boxed"
+    if extract_boxed_letter(text):
+        return "bare_letter"
+    return "unparsed"
 
 
 async def ask_one(session, base_url, model, problem, sem, timeout_s):
@@ -131,7 +142,7 @@ def main():
     n_error = 0
     n_unparsed = 0
     records = []
-    for row, r in zip(ds, results):
+    for idx, (row, r) in enumerate(zip(ds, results)):
         expected = extract_boxed_letter(row["solution"])
         got = extract_boxed_letter(r["text"]) if r["text"] else None
         correct = (expected is not None and got == expected)
@@ -141,9 +152,20 @@ def main():
             n_unparsed += 1
         if correct:
             n_correct += 1
+        problem = row["problem"]
         records.append({
-            "domain": row["domain"], "expected": expected, "got": got,
-            "correct": correct, "status": r["status"],
+            "sample_id": idx,
+            "task": "gpqa_diamond_mc",
+            "domain": row["domain"],
+            "problem_sha1": hashlib.sha1(problem.encode("utf-8")).hexdigest(),
+            "problem_len": len(problem),
+            "prompt_tokens_est": max(1, len(problem) // 4),
+            "expected": expected,
+            "got": got,
+            "correct": correct,
+            "status": r["status"],
+            "answer_format": answer_format(r["text"]),
+            "output_len": len(r["text"] or ""),
         })
 
     n = len(ds)
