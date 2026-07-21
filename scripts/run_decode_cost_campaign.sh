@@ -17,13 +17,15 @@ cd "$PROJECT_DIR"
 TRACE="${TRACE:-trace_grading_spec.jsonl}"
 WORKLOAD="${WORKLOAD:-spec}"
 MODEL_NAME="${MODEL_NAME:-LFM2.5-1.2B-Instruct}"
-W4_ARTIFACT="${W4_ARTIFACT:-artifacts/lfm2-w4a16-gptq-g128}"
+W4_ARTIFACT="${W4_ARTIFACT:-artifacts/lfm2-w4a16-gptq-g128-no-conv}"
 W4_RUNS="${W4_RUNS:-3}"
 DO_QUANTIZE="${DO_QUANTIZE:-1}"
 DO_PROFILE="${DO_PROFILE:-1}"
 DO_ACCURACY="${DO_ACCURACY:-0}"
+DO_OUTPUT_DIFF="${DO_OUTPUT_DIFF:-0}"
 BASELINE_TBT_P50_MS="${BASELINE_TBT_P50_MS:-4.0}"
 BASELINE_FAILED_COUNT="${BASELINE_FAILED_COUNT:-4}"
+REQUIRE_H200="${REQUIRE_H200:-1}"
 
 stamp="$(date +%Y%m%d-%H%M%S)"
 campaign_dir="$PROJECT_DIR/results/decode_cost_campaign_$stamp"
@@ -32,10 +34,23 @@ mkdir -p "$campaign_dir"
 echo "Campaign dir: $campaign_dir"
 echo "TRACE=$TRACE WORKLOAD=$WORKLOAD MODEL_NAME=$MODEL_NAME"
 echo "W4_ARTIFACT=$W4_ARTIFACT W4_RUNS=$W4_RUNS"
-echo "DO_PROFILE=$DO_PROFILE DO_QUANTIZE=$DO_QUANTIZE DO_ACCURACY=$DO_ACCURACY"
+echo "DO_PROFILE=$DO_PROFILE DO_QUANTIZE=$DO_QUANTIZE DO_ACCURACY=$DO_ACCURACY DO_OUTPUT_DIFF=$DO_OUTPUT_DIFF REQUIRE_H200=$REQUIRE_H200"
 
-if [[ "$W4_ARTIFACT" != "artifacts/lfm2-w4a16-gptq-g128" ]]; then
-  echo "This campaign uses configs/w4a16_gptq_{machete,marlin}.env, which point at artifacts/lfm2-w4a16-gptq-g128." >&2
+if [[ "$REQUIRE_H200" == "1" ]]; then
+  pybin="$PROJECT_DIR/.venv/bin/python"
+  [[ -x "$pybin" ]] || pybin="python3"
+  if ! "$pybin" scripts/check_gpu_capability.py \
+    --min-major 9 \
+    --json-out "$campaign_dir/gpu_capability_check.json"; then
+    echo "This campaign is intended for H200/sm90 Machete validation." >&2
+    echo "Current GPU does not satisfy compute capability >= 9.0." >&2
+    echo "Set REQUIRE_H200=0 only for local smoke/fallback runs that will not be treated as H200 evidence." >&2
+    exit 1
+  fi
+fi
+
+if [[ "$W4_ARTIFACT" != "artifacts/lfm2-w4a16-gptq-g128-no-conv" ]]; then
+  echo "This campaign uses configs/w4a16_gptq_{machete,marlin}.env, which point at artifacts/lfm2-w4a16-gptq-g128-no-conv." >&2
   echo "Either use that artifact path or update the configs before running." >&2
   exit 1
 fi
@@ -60,6 +75,7 @@ if [[ "$DO_QUANTIZE" == "1" && ! -d "$W4_ARTIFACT" ]]; then
   fi
   python3 scripts/quantize_w4a16_gptq.py \
     --model LiquidAI/LFM2.5-1.2B-Instruct \
+    --recipe recipes/w4a16_gptq_group128_no_conv.yaml \
     --output-dir "$W4_ARTIFACT" \
     --num-calibration-samples 256 \
     --max-seq-length 2048
@@ -135,6 +151,7 @@ if [[ -s "$marlin_runs" ]]; then
 fi
 
 accuracy_diff=""
+output_diff=""
 
 chosen_runs_file="$machete_runs"
 candidate="w4a16_gptq_machete"
@@ -156,13 +173,35 @@ if [[ "$DO_ACCURACY" == "1" ]]; then
   python3 benchmark/compare_accuracy.py \
     --baseline "$fp8_acc_run/accuracy/gpqa.jsonl" \
     --candidate "$w4_acc_run/accuracy/gpqa.jsonl" \
-    --candidate-modules all_linear_w4_g128_lm_head_bf16 \
+    --candidate-modules attention_mlp_w4_g128_short_conv_lm_head_bf16 \
     --json-out "$campaign_dir/accuracy_diff.json" \
     > "$campaign_dir/accuracy_diff.txt"
 fi
 
 if [[ -f "$campaign_dir/accuracy_diff.json" ]]; then
   accuracy_diff="$campaign_dir/accuracy_diff.json"
+fi
+
+if [[ "$DO_OUTPUT_DIFF" == "1" ]]; then
+  echo "Running paired trace output capture for FP8 baseline and $candidate_config"
+  TRACE="$TRACE" WORKLOAD="$WORKLOAD" MODEL_NAME="$MODEL_NAME" \
+    bash scripts/run_experiment.sh fp8_h200shape --keep-output-text
+  fp8_text_run="$(ls -td results/fp8_h200shape_* 2>/dev/null | head -1)"
+  TRACE="$TRACE" WORKLOAD="$WORKLOAD" MODEL_NAME="$MODEL_NAME" \
+    bash scripts/run_experiment.sh "$candidate_config" --keep-output-text
+  w4_text_run="$(ls -td results/${candidate_config}_* 2>/dev/null | head -1)"
+  echo "$fp8_text_run" > "$campaign_dir/fp8_output_text_run.txt"
+  echo "$w4_text_run" > "$campaign_dir/w4_output_text_run.txt"
+  python3 benchmark/compare_run_outputs.py \
+    --baseline "$fp8_text_run/results.jsonl" \
+    --candidate "$w4_text_run/results.jsonl" \
+    --candidate-modules attention_mlp_w4_g128_short_conv_lm_head_bf16 \
+    --json-out "$campaign_dir/output_diff.json" \
+    > "$campaign_dir/output_diff.txt"
+fi
+
+if [[ -f "$campaign_dir/output_diff.json" ]]; then
+  output_diff="$campaign_dir/output_diff.json"
 fi
 
 report_args=(
@@ -185,6 +224,9 @@ report_args+=(
 )
 if [[ -n "$accuracy_diff" ]]; then
   report_args+=(--accuracy-diff-json "$accuracy_diff")
+fi
+if [[ -n "$output_diff" ]]; then
+  report_args+=(--output-diff-json "$output_diff")
 fi
 
 python3 benchmark/candidate_report.py "${report_args[@]}" \

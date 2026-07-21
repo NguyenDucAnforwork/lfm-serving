@@ -1,0 +1,28 @@
+lfm2_w4a16_gptq_stage:
+  quantization_modifiers:
+    GPTQModifier:
+      block_size: 128
+      dampening_frac: 0.01
+      actorder: static
+      offload_hessians: true
+      ignore:
+        - lm_head
+        - re:.*\.conv\..*
+        # Keep late MLP projections in BF16: this was the fastest candidate
+        # with ARC pass and only GSM8K regression remaining.
+        - re:model\.layers\.(10|11|12|13|14|15)\.feed_forward\.(w1|w2|w3)
+        # Restore attention modules with high GPTQ reconstruction error from
+        # the attention-only probe: layer 10/12/14 q/k/v/out.
+        - re:model\.layers\.(10|12|14)\.self_attn\.(q_proj|k_proj|v_proj|out_proj)
+      config_groups:
+        group_0:
+          targets:
+            - Linear
+          input_activations: null
+          output_activations: null
+          weights:
+            num_bits: 4
+            type: int
+            symmetric: true
+            strategy: group
+            group_size: 64

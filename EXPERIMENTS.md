@@ -995,6 +995,11 @@ image/config successfully.
 - `benchmark/compare_accuracy.py` compares baseline and candidate per-sample
   accuracy JSONL files and groups exact regressions/fixes by task/domain, prompt
   length bucket, answer format, and a supplied quantized-module policy label.
+- `benchmark/compare_run_outputs.py` compares generated text from two
+  `replay_trace.py --keep-output-text` runs and groups changed outputs by turn,
+  input-length bucket, answer-format pair, and quantized-module policy label. It
+  fails loudly if output text was not captured, so token/length deltas are not
+  mistaken for semantic parity evidence.
 - `benchmark/gpqa_eval.py` now writes per-sample `sample_id`, task, domain,
   prompt-length estimate, answer format, output length, and a problem SHA1 so exact
   changed samples can be compared instead of relying only on aggregate accuracy.
@@ -1008,7 +1013,9 @@ image/config successfully.
   >=15% better than matched baseline, and no extra failures.
 - `scripts/run_experiment.sh` automatically writes `w4_validation.json` for
   `QUANTIZATION=compressed-tensors` runs so backend/artifact constraint evidence stays
-  attached to the result directory.
+  attached to the result directory. Set `KEEP_OUTPUT_TEXT=1` for a promising
+  candidate rerun when exact output-diff or malformed/truncated-output analysis is
+  required.
 - `benchmark/candidate_report.py` combines repeated run summaries, W4 validation,
   accuracy diff, and the submission compose path into one explicit PASS vs
   FAIL/INCOMPLETE report. It only counts run dirs without `FAILED` or `CONTENDED`
@@ -1135,6 +1142,12 @@ TRACE=trace_grading_spec.jsonl WORKLOAD=spec W4_RUNS=3 \
   bash scripts/run_decode_cost_campaign.sh
 ```
 
+`scripts/run_decode_cost_campaign.sh` now requires a CUDA device with compute
+capability >= 9.0 by default and writes `gpu_capability_check.json` in the campaign
+directory. This prevents accidentally treating RTX 3090/sm86 Marlin fallback evidence
+as H200/Machete validation. Set `REQUIRE_H200=0` only for local smoke runs that will
+not be used as H200 evidence.
+
 Outputs land under `results/decode_cost_campaign_<timestamp>/`, including
 `kernel_next_step.{txt,json}` from the FP8 profile and `candidate_report.{md,json}`
 from the selected W4 backend runs. If `candidate_report.md` says PASS, then and only
@@ -1158,7 +1171,7 @@ Guarded packaging after a PASS report:
 ```bash
 bash scripts/prepare_w4_submission.sh \
   results/decode_cost_campaign_<timestamp>/candidate_report.json \
-  artifacts/lfm2-w4a16-gptq-g128 \
+  artifacts/lfm2-w4a16-gptq-g128-no-conv \
   submission/docker-compose.w4a16-gptq.yml
 ```
 
@@ -1204,7 +1217,8 @@ python benchmark/recommend_kernel_step.py \
 source .venv-quant/bin/activate
 python scripts/quantize_w4a16_gptq.py \
   --model LiquidAI/LFM2.5-1.2B-Instruct \
-  --output-dir artifacts/lfm2-w4a16-gptq-g128 \
+  --recipe recipes/w4a16_gptq_group128_no_conv.yaml \
+  --output-dir artifacts/lfm2-w4a16-gptq-g128-no-conv \
   --num-calibration-samples 256 \
   --max-seq-length 2048
 ```
@@ -1217,7 +1231,7 @@ TRACE=trace_grading_spec.jsonl WORKLOAD=spec \
 grep -E "Using .*CompressedTensorsWNA16|linear_backend|Machete|Marlin" \
   results/w4a16_gptq_machete_*/server.log
 python scripts/validate_w4_candidate.py \
-  --artifact artifacts/lfm2-w4a16-gptq-g128 \
+  --artifact artifacts/lfm2-w4a16-gptq-g128-no-conv \
   --run-dir results/<exact_w4_run_dir>
 python benchmark/summarize_run.py results/w4a16_gptq_machete_*/results.jsonl
 python benchmark/analyze_failures.py results/w4a16_gptq_machete_*/results.jsonl \
@@ -1260,7 +1274,7 @@ time bash scripts/run_accuracy.sh w4a16_gptq_machete gpqa_candidate
 python benchmark/compare_accuracy.py \
   --baseline results/<fp8_accuracy_run>/accuracy/gpqa.jsonl \
   --candidate results/<w4_accuracy_run>/accuracy/gpqa.jsonl \
-  --candidate-modules all_linear_w4_g128_lm_head_bf16 \
+  --candidate-modules attention_mlp_w4_g128_short_conv_lm_head_bf16 \
   --json-out results/<w4_run>/accuracy_diff.json
 ```
 
@@ -1303,6 +1317,154 @@ venv. Local hardware/runtime:
 
 - GPU: RTX 3090, compute capability 8.6, 24 GiB.
 - Driver: 560.35.03, `nvidia-smi` reports CUDA 12.6.
+
+## Session 6: local CUDA 13/vLLM 0.22 decode-cost profile and W4 rejection (2026-07-20)
+
+Environment caveat: these are local RTX 3090 / sm86 runs, not official H200
+submissions. They are useful for root-cause and backend validation, but H200 Machete
+performance still requires an H200 run.
+
+### Baseline and profiler
+
+Created `.venv` with vLLM 0.22.1 / torch 2.11.0+cu130 and added
+`SERVED_MODEL_NAME=LFM2.5-1.2B-Instruct` to the local FP8 configs. Without that
+alias the OpenAI replay sent the expected served model name and every request failed
+with HTTP 404 (`results/fp8_h200shape_20260720-081721`, 420/420 failures). This was
+a config bug, not a model/runtime failure.
+
+Matched local FP8 baseline:
+
+| run | backend evidence | ERS | TBT mean/p50/p95 ms | TTFT mean/p50/p95 ms | decode tok/s | VRAM | failures |
+|---|---|---:|---:|---:|---:|---:|---:|
+| `fp8_h200shape_20260720-082416` | `MarlinFP8ScaledMMLinearKernel for Fp8PerTensorOnlineLinearMethod`, FlashAttention | 69.15 | 2.818 / 2.770 / 3.152 | 63.6 / 58.3 / 91.4 | 357.6 | 5638 MiB | 0 |
+
+Profile run (`fp8_profile_spec_local_20260720-083205`) was also clean:
+ERS 68.05, TBT 2.826 / 2.797 / 3.214 ms, TTFT 68.2 / 63.8 / 96.9 ms, 0 failures.
+
+The initial trace analyzer counted PyTorch profiler wrapper ranges as real kernel
+time. `benchmark/analyze_profile_trace.py` was fixed to restrict buckets to CUDA
+kernel/runtime/driver/memcpy/overhead events and to classify FlashAttention before
+generic CUTLASS GEMM. Corrected CUDA attribution:
+
+| bucket | duration | share | events |
+|---|---:|---:|---:|
+| GEMM | 25.430 ms | 64.87% | 1236 |
+| FP8 scaling/reduction | 0.000 ms | 0.00% | 0 |
+| gated-conv/state update | 0.238 ms | 0.61% | 120 |
+| attention | 1.562 ms | 3.99% | 216 |
+| launch/runtime overhead | 8.923 ms | 22.76% | 653 |
+| other | 3.047 ms | 7.77% | 1705 |
+
+Conclusion from profile:
+
+- Do **not** run static/offline FP8: no FP8 scaling hotspot was observed.
+- Do **not** do gated-conv fusion: short-conv state/update was <1% of profiled CUDA
+  time.
+- GEMM dominates, so W4A16 GPTQ/compressed-tensors remains the correct high-ROI
+  experiment. The profiler recommendation file agrees:
+  `recommended_area=w4a16_gptq`.
+
+### W4A16 GPTQ compressed-tensors results
+
+Exported all-Linear W4A16 GPTQ artifact first:
+
+```bash
+.venv-quant/bin/python scripts/quantize_w4a16_gptq.py \
+  --model LiquidAI/LFM2.5-1.2B-Instruct \
+  --output-dir artifacts/lfm2-w4a16-gptq-g128 \
+  --num-calibration-samples 128 \
+  --max-seq-length 2048 \
+  --local-files-only
+```
+
+Artifact validated structurally, but vLLM could not load it with Marlin:
+
+- vLLM did select `MarlinLinearKernel for CompressedTensorsWNA16`;
+- load then failed with `KeyError: 'layers.0.short_conv.in_proj.weight_packed'`.
+
+Root cause: vLLM's LFM2 `ShortConv` constructs `in_proj`/`out_proj` without
+`quant_config`, while the model loader rewrites HF `.conv.` names to vLLM
+`.short_conv.` names. Packed W4 tensors for short-conv projections therefore have no
+matching quantized parameter in the vLLM module. This is a loader/model-support issue,
+not a benchmarking result.
+
+Added `recipes/w4a16_gptq_group128_no_conv.yaml` and updated W4 configs/campaigns to
+use `artifacts/lfm2-w4a16-gptq-g128-no-conv`. This keeps `lm_head` and all
+`model.layers.*.conv.*` projections BF16, while quantizing attention and MLP GEMMs to
+W4A16 group-128 symmetric GPTQ. Key inspection confirmed:
+
+- `model.layers.0.conv.in_proj.weight` and `out_proj.weight` remain normal weights;
+- `model.layers.0.feed_forward.*` and `model.layers.2.self_attn.*` are packed W4
+  tensors.
+
+Machete local check: rejected before serving because this host is sm86:
+`MacheteLinearKernel requires capability 90, current compute capability is 86`.
+This is expected locally and does not disprove H200 Machete.
+
+No-conv W4 Marlin local runs:
+
+| run | backend evidence | ERS | TBT mean/p50/p95 ms | TTFT mean/p50/p95 ms | decode tok/s | VRAM | failures | decision |
+|---|---|---:|---:|---:|---:|---:|---:|---|
+| `w4a16_gptq_marlin_no_conv_20260720-091148` | `MarlinLinearKernel for CompressedTensorsWNA16` | 43.32 | 4.958 / 5.174 / 6.765 | 140.2 / 103.0 / 307.5 | 353.3 | 3094 MiB | 0 | REJECT |
+| `w4a16_gptq_marlin_20260720-091153` | `MarlinLinearKernel for CompressedTensorsWNA16` | 43.29 | 4.909 / 5.154 / 6.681 | 150.8 / 106.0 / 423.7 | 353.7 | 3094 MiB | 0 | REJECT |
+
+Aggregate (`results/w4a16_gptq_marlin_no_conv_local_aggregate.json`) versus matched
+local FP8 p50 2.770 ms:
+
+- W4 p50 TBT mean: 5.164 ms.
+- Best p50 decode delta: -86.0% (slower, not an improvement).
+- Failures: 0, same as local FP8.
+- ERS regressed from 69.15 to ~43.30.
+
+Candidate report:
+
+- `results/w4a16_gptq_marlin_no_conv_candidate_report.md`
+- Decision: `FAIL / INCOMPLETE`.
+- Clean runs counted by the report: 0, because both local W4 run dirs have
+  `CONTENDED` markers.
+- Decode gate: failed (`tbt_target_met=false`, `decode_improvement_met=false`).
+- W4 backend/artifact gate: passed (`MarlinLinearKernel`, compressed-tensors W4A16
+  group-128, no BitsAndBytes/FP8 mixing).
+- Accuracy gate: failed/incomplete because no GPQA or captured-output semantic diff
+  was run for this rejected candidate.
+
+The W4 run directories contain `CONTENDED` markers, but inspection indicates this is
+likely a monitor artifact: `vram_monitor.sh` subtracts only the EngineCore PID from
+total GPU memory, while vLLM may allocate memory in another local process. The
+duplicate W4 runs are nearly identical, so the rejection does not rely on the marker.
+
+Accuracy/error analysis status:
+
+- Request failures: none in both W4 runs (`failure_analysis.txt`: 420 rows, 0
+  failures).
+- Exact output-level accuracy comparison is not possible from these replay artifacts
+  because `results.jsonl` stores output token/length timing, not full generated text.
+- `benchmark/compare_run_outputs.py` was added and intentionally fails on these runs
+  with `output_text missing ... Re-run both experiments with replay_trace.py
+  --keep-output-text before semantic diffing`.
+- `scripts/run_experiment.sh` now supports `KEEP_OUTPUT_TEXT=1` so any future
+  promising candidate can be rerun with generated text persisted for exact
+  changed-sample, malformed, or truncated-output analysis.
+- ERS/proxy quality regressed heavily, so W4 is not a promising candidate and does not
+  justify GPQA accuracy or 3-run stability gates locally.
+
+### Current recommendation
+
+No candidate passes the requested done criteria. The best local evidence says:
+
+1. matched FP8 is GEMM-dominated, not FP8-scaling- or gated-conv-dominated;
+2. all-Linear W4 is incompatible with current vLLM LFM2 short-conv loading;
+3. loadable attention/MLP-only W4A16 GPTQ selects Marlin correctly but is much slower
+   and much lower ERS on RTX 3090.
+
+Single most promising concrete kernel-level next step if continuing on H200:
+run the no-conv compressed-tensors artifact on H200 with forced Machete and profile
+decode. If Machete also regresses or fails to select, stop W4 for this model and focus
+on vLLM kernel work around the GEMM/launch boundary identified in the FP8 profile:
+specifically reduce the many small decode GEMM launches by fusing LFM2 MLP gate/up
+packing or adding an H200-specialized fused path for the dominant per-token Marlin/FP8
+linear shapes. Do not spend time on static FP8 or gated-conv fusion without new
+profile evidence.
 - Replaced the broken CUDA-13 `.venv` stack in-place with official CUDA-12.6-compatible
   packages:
   - `torch==2.7.1+cu126`
@@ -1384,3 +1546,620 @@ Current concrete next step remains unchanged: run the prepared H200 campaign on 
 CUDA-13-capable H200 machine. Local CUDA 12.6 is useful for catching script/runtime
 bugs, and did catch the tokenizer-model bug, but it cannot produce the
 profiler-backed submission evidence required by the goal.
+
+## Session 6: CUDA 13 local profile + W4A16 compressed-tensors attempt (2026-07-20)
+
+This section supersedes the earlier local CUDA-12.6 limitation for this session only.
+The machine available for this run was an RTX 3090 on driver 590.48.01 with a
+CUDA-13-capable vLLM stack:
+
+- `.venv`: `vllm==0.22.1`, Torch 2.11.0+cu130, Transformers 5.14.1,
+  `compressed-tensors==0.15.0.1`.
+- `.venv-quant`: `llmcompressor==0.12.0`, Torch 2.12.0+cu130,
+  `compressed-tensors==0.17.1`.
+- Hardware caveat: RTX 3090 is sm86. It can validate Marlin fallback and artifact
+  loading, but it cannot run Machete, which vLLM reports requires sm90.
+
+### Script/config fixes made during this session
+
+- Added `SERVED_MODEL_NAME=LFM2.5-1.2B-Instruct` to `configs/fp8_h200shape.env`
+  and `configs/fp8_h200shape_cpu3.env`. Without this alias, the replay sent
+  requests for `LFM2.5-1.2B-Instruct` while the server exposed only the HF repo
+  name, causing 420/420 HTTP 404 failures.
+- Updated `scripts/run_profile_capture.sh` to use the project `.venv` Python and
+  to set profiler `ignore_frontend=false`. With `ignore_frontend=true`, the
+  engine initialized but the HTTP frontend never became usable.
+- Updated `benchmark/analyze_profile_trace.py` to filter profiler wrapper/meta
+  events and to classify FlashAttention before generic CUTLASS/GEMM. The original
+  bucket output was dominated by `PyTorch Profiler`/`ProfilerStep` wrapper events.
+- Added `recipes/w4a16_gptq_group128_no_conv.yaml` plus configs
+  `w4a16_gptq_marlin_no_conv.env` and `w4a16_gptq_machete_no_conv.env`.
+
+### Matched FP8 local baseline and profile
+
+Corrected local baseline:
+
+| Run | Backend | ERS | TBT mean | TBT p50 | TBT p95 | TTFT mean | TTFT p50 | TTFT p95 | VRAM peak | Failures |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| `fp8_h200shape_20260720-082416` | `MarlinFP8ScaledMMLinearKernel` for `Fp8PerTensorOnlineLinearMethod`; FlashAttention | 69.15 | 2.82 | 2.77 | 3.15 | 63.6 | 58.3 | 91.4 | 5638 MiB | 0 |
+
+Profile replay:
+
+| Run | ERS | TBT mean | TBT p50 | TBT p95 | TTFT mean | Failures |
+|---|---:|---:|---:|---:|---:|---:|
+| `fp8_profile_spec_local_20260720-083205` | 68.05 | 2.83 | 2.80 | 3.21 | 68.2 | 0 |
+
+Corrected CUDA-event profile buckets from that run:
+
+| Bucket | Duration | Share | Event count | Interpretation |
+|---|---:|---:|---:|---|
+| GEMM | 25.430 ms | 64.87% | 1236 | Dominant; Marlin FP8-scaled and BF16 CUTLASS/GEMV kernels |
+| Launch/runtime overhead | 8.923 ms | 22.76% | 653 | Significant but not directly addressed by static FP8 |
+| Attention | 1.562 ms | 3.99% | 216 | FlashAttention/kv-cache kernels, not the main bottleneck |
+| Gated-conv/state update | 0.238 ms | 0.61% | 120 | Not a fusion target based on this trace |
+| FP8 scaling | 0.000 ms | 0.00% | 0 | No evidence for static/offline FP8 as a high-ROI next step |
+| Other | 3.047 ms | 7.77% | 1705 | Residual kernels |
+
+Decision: do not pursue static FP8 or gated-conv fusion from this profile. The
+profile justifies W4A16 only because decode is GEMM-dominated.
+
+### W4A16 GPTQ compressed-tensors experiments
+
+Initial artifact:
+
+- Exported `artifacts/lfm2-w4a16-gptq-g128` with GPTQ group size 128,
+  symmetric int4 weights, `lm_head` ignored, 128 calibration samples.
+- Machete startup failed locally before serving:
+
+```text
+MacheteLinearKernel requires capability 90, current compute capability is 86
+```
+
+- Marlin startup failed while loading:
+
+```text
+KeyError: 'layers.0.short_conv.in_proj.weight_packed'
+```
+
+Root cause: HF weights use `.conv.`, while vLLM's LFM2 loader rewrites this to
+`.short_conv.`. vLLM's `ShortConv` module does not pass `quant_config` to its
+`in_proj`/`out_proj` Linear layers, so quantizing those projections produces packed
+tensors that the vLLM parameter set cannot load.
+
+Corrected no-conv artifact:
+
+- Exported `artifacts/lfm2-w4a16-gptq-g128-no-conv` using
+  `recipes/w4a16_gptq_group128_no_conv.yaml`.
+- Quantized attention and MLP GEMMs only.
+- Left `lm_head` and all `.conv.` / short-conv projections unquantized.
+- Validated artifact had no packed conv tensors and vLLM validation passed.
+- `w4a16_gptq_machete_no_conv_20260720-092403` failed locally only because
+  Machete requires compute capability 90 and this RTX 3090 is compute capability
+  86. It did not reproduce the prior short-conv packed-key loader failure, so the
+  no-conv artifact is the correct one to test on H200.
+
+No-conv Marlin result:
+
+| Run | Backend | ERS | TBT mean | TBT p50 | TBT p95 | TTFT mean | TTFT p50 | TTFT p95 | VRAM notes | Failures |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---|---:|
+| `w4a16_gptq_marlin_no_conv_20260720-091148` | `MarlinLinearKernel` for `CompressedTensorsWNA16`; FlashAttention | 43.32 | 4.96 | 5.17 | 6.77 | 140.2 | 103.0 | 307.5 | monitor attributed 3094 MiB to detected PID and ~15.5 GiB to "other"; server log PID mismatch indicates this is likely monitor attribution, not another tenant | 0 |
+
+Compared with the matched FP8 baseline, W4 no-conv regressed decode by:
+
+- TBT p50: 2.77 ms -> 5.17 ms.
+- TBT mean: 2.82 ms -> 4.96 ms.
+- TTFT mean: 63.6 ms -> 140.2 ms.
+- ERS: 69.15 -> 43.32.
+- Failed requests: unchanged at 0.
+
+The regression was broad, not isolated to one conversation turn:
+
+| Turn | Samples | Mean TBT delta vs FP8 | Mean TTFT delta vs FP8 | Output-token delta |
+|---:|---:|---:|---:|---:|
+| 0 | 55 | +1.96 ms | +76.0 ms | 0 |
+| 1 | 55 | +2.14 ms | +117.7 ms | 0 |
+| 2 | 55 | +2.33 ms | +74.3 ms | 0 |
+| 3 | 55 | +2.39 ms | +73.5 ms | 0 |
+| 4 | 55 | +2.06 ms | +60.5 ms | 0 |
+| 5 | 55 | +1.97 ms | +57.9 ms | 0 |
+
+Failure analysis for W4 no-conv:
+
+- Total request records: 420.
+- Failures: 0.
+- By failure type, turn, input/output length bucket, observed concurrency, and elapsed
+  minute: all empty.
+
+Accuracy/regression analysis limitation:
+
+- The replay JSONL stores timing/status/token counts and output text length, but not
+  generated text by default.
+- Therefore exact changed-sample semantic comparison by task/prompt length/answer
+  format cannot be done post-hoc from this run.
+- Because W4 no-conv is already slower and has a large ERS drop, it is rejected
+  without spending three clean runs or GPQA accuracy budget.
+- If W4 is rerun on H200/Machete and is fast enough to become promising, rerun with
+  text capture enabled before claiming accuracy parity.
+
+Harness fixes after this run:
+
+- `benchmark/replay_trace.py` now supports `--keep-output-text`. Default behavior
+  remains lean, but promising candidates can persist generated text for exact
+  changed-sample analysis.
+- Added `benchmark/compare_run_outputs.py` to compare two text-capturing replay
+  JSONLs and group changed samples by turn, prompt-length bucket, output budget,
+  answer-format pair, and declared quantized module set. It fails explicitly if
+  `output_text` is missing, preventing weak post-hoc accuracy claims from
+  length-only artifacts.
+- `scripts/run_experiment.sh` now parses `EngineCore pid=...` from `server.log`
+  before falling back to `nvidia-smi` process names/highest-memory process. This
+  addresses the W4 run's false "other tenant" VRAM attribution caused by a PID
+  mismatch between the monitor and actual EngineCore.
+- `scripts/run_decode_cost_campaign.sh` now supports `DO_OUTPUT_DIFF=1`. When
+  enabled, it performs paired FP8/candidate trace replays with
+  `--keep-output-text`, runs `benchmark/compare_run_outputs.py`, and passes the
+  resulting grouped output-diff JSON to `benchmark/candidate_report.py`.
+- `benchmark/candidate_report.py` now includes trace output-diff counts/groups in
+  the submission-gate report when `--output-diff-json` is provided.
+- Added `scripts/validate_decode_cost_evidence.sh` to regenerate and validate the
+  local evidence package. It checks required artifacts, Python/shell syntax, W4
+  artifact/backend validation, compose validation, aggregate/candidate/handoff
+  report generation, and verifies that historical no-text traces fail the output
+  diff guardrail as expected.
+- Validation: `bash -n` passed for run scripts; `py_compile` passed for
+  `replay_trace.py`, `compare_run_outputs.py`, `analyze_profile_trace.py`, and
+  `quantize_w4a16_gptq.py`; `compare_run_outputs.py` was smoke-tested both on
+  missing-text artifacts (expected refusal) and one changed synthetic sample
+  (expected grouped diff). `candidate_report.py` was smoke-tested with a synthetic
+  output-diff JSON and the rejected W4 Marlin run, confirming the report wiring.
+  `scripts/validate_decode_cost_evidence.sh` passes and regenerates the reports
+  against the official 4 ms TBT p50 / failed_count 4 baseline.
+
+### Current status against the decode-cost goal
+
+No new candidate passes the done criteria.
+
+Consolidated machine-readable handoff:
+
+- `results/w4a16_gptq_marlin_no_conv_candidate_report.md`
+- `results/w4a16_gptq_marlin_no_conv_candidate_report.json`
+- `results/decode_cost_handoff_report.md`
+- `results/decode_cost_handoff_report.json`
+
+These reports combine the matched FP8 baseline, corrected CUDA profile buckets, W4
+candidate rejection, done-criteria audit, rejected hypotheses, and the
+profile-backed next kernel step. The W4 candidate report uses the official 4 ms TBT
+p50 / failed_count 4 gate and marks local W4 Marlin no-conv as
+`FAIL / INCOMPLETE`. The handoff report labels both baselines explicitly:
+official gate baseline for pass/fail checks and matched local FP8 baseline for
+local profile/performance comparison.
+
+Reproduce/validate the current evidence package with:
+
+```bash
+bash scripts/validate_decode_cost_evidence.sh
+```
+
+This regenerates the W4 aggregate, candidate report, and handoff report; validates
+the no-conv W4 artifact and W4 compose flags; runs Python/shell syntax checks; and
+checks that output semantic diffing fails loudly for historical runs that did not
+capture `output_text`.
+
+H200 campaign preflight was also tested locally with `DO_PROFILE=0 DO_QUANTIZE=0`;
+it correctly rejected this RTX 3090 host (`major=8`, `minor=6`) for the default
+`REQUIRE_H200=1` path.
+
+Rejected hypotheses:
+
+- Static/offline FP8: rejected for now because profiled FP8 scaling/reduction overhead
+  was 0% in the corrected CUDA-event profile.
+- Gated-conv kernel fusion: rejected for now because short-conv/state-update was only
+  0.61% of profiled CUDA duration.
+- W4A16 Marlin fallback on RTX 3090: rejected because it is slower than the matched
+  FP8 baseline and has a large ERS regression.
+
+Single most promising concrete next step:
+
+Run the corrected no-conv W4A16 compressed-tensors artifact/config on the actual H200
+with `LINEAR_BACKEND=machete` and confirm:
+
+```text
+Using MacheteLinearKernel for CompressedTensorsWNA16
+```
+
+If H200/Machete is still slower than FP8 or regresses accuracy, the next kernel-level
+step is not more scheduler/cache sweeping; it is implementing or enabling an H200
+decode grouped-GEMM / launch-fusion path for LFM2's hot Linear shapes
+(`hidden_size=2048`, MLP intermediate `8192` after auto-adjust), covering attention
+and MLP W4A16/FP8 linears while leaving short-conv projections BF16. This directly
+targets the profiled hot buckets: GEMM 64.87% and launch/runtime 22.76%.
+
+### Session 7 pre-submit guard update: W4 H200 backend probe
+
+The W4 path now has a narrower, explicitly labeled backend-probe route. This is
+not a claim that W4 is a passing candidate. It only allows spending one official
+H200 slot to learn whether Machete works for the no-conv W4 artifact, and only
+after two pre-submit gates pass.
+
+Required accuracy gate:
+
+- ARC Challenge full.
+- GSM8K limit 200.
+- GPQA Diamond official if time permits / access is available.
+- Output coherence and answer-format inspection.
+- Any clear regression, malformed output, or credible `accuracy_drop` /
+  `f_delta` risk rejects W4 before submit.
+
+Required exact Docker gate:
+
+- Build an image containing the no-conv W4 checkpoint.
+- Cold-start the exact submit entrypoint/command from
+  `submission/docker-compose.w4a16-gptq.yml`.
+- Confirm `/health`.
+- Confirm served-model alias `LFM2.5-1.2B-Instruct`.
+- Replay all 420 spec requests with captured output text.
+- Require zero failures and no corrupted/empty output.
+- Confirm compose uses `--quantization=compressed-tensors`, not
+  `--quantization=fp8_per_tensor`, and preserves the FP8 scheduler flags so the
+  probe isolates quantization/backend.
+
+Implementation:
+
+- Added `scripts/run_w4_probe_gates.sh`. It validates the W4 artifact and final
+  compose, requires explicit accuracy-gate JSON, builds the image, starts the
+  exact Docker Compose stack, checks health/model alias, replays the 420-request
+  spec trace with `--keep-output-text`, and fails on any request failure or
+  corrupted/empty output.
+- Updated `scripts/prepare_w4_submission.sh` with a separate `--probe` mode.
+  Default mode still requires `candidate_report.gates.candidate_passes=true`.
+  Probe mode only stages the no-conv W4 checkpoint after an explicit passing
+  accuracy-gate JSON. The exact Docker/replay gate must then pass before any
+  official submit.
+
+Official W4 probe interpretation:
+
+- TBT 3ms, ERS >=63, `f_delta=1`: Machete has a strong signal; tune with
+  remaining slots.
+- TBT 4ms and ERS only 60-61: reject W4.
+- ERS below FP8 or failures increase: return to FP8.
+- Startup failure: likely unsupported Machete Linear shape; do not spend a
+  second W4 slot.
+- Accuracy drop or `f_delta<1`: reject W4 regardless of latency.
+
+If W4 fails, the next direction remains CUDA graph coverage / graph-break /
+capture-size analysis for batch 1-8 on hybrid LFM, because the corrected FP8
+profile shows launch/runtime overhead at 22.76% and no evidence supporting
+static FP8 scaling work or gated-conv fusion.
+
+### Session 8 accuracy gate: current no-conv W4 rejected (2026-07-20)
+
+Ran the mandatory W4 pre-submit accuracy gate with:
+
+```bash
+bash scripts/run_w4_accuracy_gate.sh
+```
+
+Script updates/fixes for this run:
+
+- Recreated `.venv-eval` with `lm-eval[api]==0.4.12`.
+- Fixed `scripts/run_w4_accuracy_gate.sh` to pass
+  `model=LFM2.5-1.2B-Instruct` for API requests and
+  `tokenizer=LiquidAI/LFM2.5-1.2B-Instruct` for local tokenization. Without this
+  split, `lm_eval local-completions` tried to download tokenizer/config from the
+  served alias and failed with HF 401 / repo-not-found.
+- Added `configs/bf16_h200shape.env` so BF16, FP8, and W4 are compared under the
+  same H200-shape serving flags where practical.
+- Added `benchmark/make_accuracy_gate.py` to produce
+  `results/accuracy_w4_gate/accuracy_gate.draft.json`.
+
+No `HF_TOKEN` was present, so official GPQA Diamond was skipped. ARC Challenge
+full and GSM8K limit-200 were completed for BF16, FP8, and W4.
+
+Accuracy results:
+
+| task | BF16 h200-shape | FP8 h200-shape | W4 no-conv Marlin | W4 delta vs BF16 | decision |
+|---|---:|---:|---:|---:|---|
+| ARC Challenge full (`acc_norm`) | 0.2705 | 0.2713 | 0.2662 | -0.0043 | pass, inside 1.5pp W4 threshold |
+| GSM8K limit 200 (`exact_match`, flexible) | 0.665 | 0.700 | 0.570 | -0.0950 | **FAIL**, exceeds 2.5pp W4 threshold |
+
+Machine-readable gate:
+
+- `results/accuracy_w4_gate/accuracy_gate.draft.json`
+- `pass=false`
+- `accuracy_drop_risk=true`
+- failure: `gsm8k delta_vs_bf16=0.0950 > 0.0250`
+
+Exact changed-sample analysis:
+
+- `results/accuracy_w4_gate/regression_analysis.json`
+- GSM8K: BF16 correct 133/200, FP8 correct 140/200, W4 correct 114/200.
+- GSM8K W4 vs BF16: 28 regressions, 9 fixes, 105 same-right, 58 same-wrong.
+- ARC W4 vs BF16: 75 regressions, 70 fixes, 242 same-right, 785 same-wrong,
+  net small enough to pass the ARC gate.
+- Quantized module policy: attention/MLP W4 group-128, short-conv and lm_head BF16.
+- Regressed GSM8K examples are free-form numeric answers; several are simple
+  arithmetic problems where BF16/FP8 returned the target number and W4 returned a
+  different number (e.g. 18 -> 26, 460 -> 940, 243 -> 234). This is systematic
+  math/numeric damage, not a format-only parser issue.
+
+Conclusion: **do not submit W4**, even as an H200 backend probe. The user's rule
+was explicit: accuracy drop or `f_delta<1` rejects W4 regardless of latency. The
+next direction should move off W4 and target the profile-backed launch/runtime
+overhead bucket: CUDA graph coverage, graph breaks, and capture sizes for batch
+1-8 on hybrid LFM.
+
+### Session 9 CUDA graph coverage: capture-size sweep rejected (2026-07-20)
+
+Reason for this experiment: corrected FP8 profile attributed 8.923 ms / 22.76%
+of measured CUDA time to launch/runtime overhead. Baseline already uses CUDA
+graphs, but logs showed default capture sizes `[1, 2, 4, 8, 16]`, with FULL
+decode capture only 4 sizes. This created a concrete hypothesis: missing
+batch-size captures for 3/5/6/7 could cause graph misses or graph breaks for
+batch 1-8 decode traffic.
+
+Implementation:
+
+- Added CUDA graph flags to `scripts/start_server.sh`:
+  `CUDAGRAPH_CAPTURE_SIZES`, `MAX_CUDAGRAPH_CAPTURE_SIZE`, and
+  `CUDAGRAPH_METRICS`.
+- Added `configs/fp8_cg_1_8.env`: FP8 baseline plus
+  `CUDAGRAPH_CAPTURE_SIZES="1 2 3 4 5 6 7 8"` and
+  `MAX_CUDAGRAPH_CAPTURE_SIZE=8`.
+- Added `configs/fp8_cg_1_8_16.env`: FP8 baseline plus
+  `CUDAGRAPH_CAPTURE_SIZES="1 2 3 4 5 6 7 8 16"` and
+  `MAX_CUDAGRAPH_CAPTURE_SIZE=16`.
+- Fixed `benchmark/replay_trace.py` after a local bug from the new
+  `--keep-output-text` option caused `results` to receive a boolean argument.
+
+Matched local FP8 baseline:
+
+- `results/fp8_h200shape_20260720-082416`
+- ERS 69.1521, TBT mean/p50/p95 2.8180 / 2.7703 / 3.1523 ms,
+  TTFT mean/p50/p95 63.599 / 58.302 / 91.420 ms, failures 0.
+- Log: default `cudagraph_capture_sizes: [1, 2, 4, 8, 16]`;
+  CUDA graph memory profiling `PIECEWISE=5 (largest=16), FULL=4 (largest=8)`;
+  graph pool 0.05 GiB actual.
+
+Experiment A: capture exactly 1-8
+
+- Run: `results/fp8_cg_1_8_20260720-104338`
+- Backend: `Selected MarlinFP8ScaledMMLinearKernel for
+  Fp8PerTensorOnlineLinearMethod`.
+- Log: `cudagraph_capture_sizes: [1, 2, 3, 4, 5, 6, 7, 8]`;
+  CUDA graph profiling `PIECEWISE=8 (largest=8), FULL=8 (largest=8)`;
+  graph pool 0.07 GiB actual.
+- Results: ERS 69.0927, TBT mean/p50/p95 2.7915 / 2.7733 / 3.0754 ms,
+  TTFT mean/p50/p95 64.762 / 60.101 / 92.172 ms, failures 0, VRAM 5640 MiB.
+- Versus baseline: TBT mean -0.94%, p50 +0.11% (worse), p95 -2.44%,
+  TTFT mean +1.83% (worse). Not enough for candidate validation.
+
+Experiment B: capture 1-8 plus retain size 16
+
+- Run: `results/fp8_cg_1_8_16_20260720-105034`
+- Backend: `Selected MarlinFP8ScaledMMLinearKernel for
+  Fp8PerTensorOnlineLinearMethod`.
+- Log: `cudagraph_capture_sizes: [1, 2, 3, 4, 5, 6, 7, 8, 16]`;
+  CUDA graph profiling `PIECEWISE=9 (largest=16), FULL=8 (largest=8)`;
+  graph pool 0.07 GiB actual.
+- Results: ERS 69.1852, TBT mean/p50/p95 2.7981 / 2.7696 / 3.1018 ms,
+  TTFT mean/p50/p95 64.129 / 58.828 / 93.927 ms, failures 0, VRAM 5634 MiB.
+- Versus baseline: TBT mean -0.71%, p50 -0.02%, p95 -1.60%,
+  TTFT mean +0.83% (worse). Not enough for candidate validation.
+
+Profile check for Experiment B:
+
+- Run: `results/fp8_cg_1_8_16_profile_20260720-105736`
+- Profile buckets: `results/fp8_cg_1_8_16_profile_20260720-105736/profile_buckets.json`
+- Compared to baseline profile
+  `results/fp8_profile_spec_local_20260720-083205/profile_buckets_cuda.json`:
+  launch/runtime overhead was effectively unchanged:
+  8.900 ms / 22.75% / 653 events vs baseline 8.923 ms / 22.76% / 653 events.
+  GEMM, attention, gated-conv, and other buckets were also effectively
+  unchanged.
+
+Conclusion: capture-size coverage is not the root cause of the 22.76%
+launch/runtime overhead on this workload. Expanding FULL decode graph coverage
+from 4 to 8 sizes changes startup/capture memory slightly but does not reduce
+the number of runtime launch/graph/memcpy/sync events. Do not spend 3-run
+candidate validation or more scheduler/cache/capture-size sweeps on this path.
+
+Next concrete kernel-level step: inspect the captured torch profile trace at the
+operator/iteration level and target the remaining event count directly. The
+profile shows 653 launch/runtime events in the short capture window even with
+FULL CUDA graph coverage for batch 1-8, dominated by `cudaLaunchKernel`,
+`cudaGraphLaunch`, `cudaMemcpyAsync`, and `cudaDeviceSynchronize`. The likely
+work is not more capture sizes; it is reducing graph boundaries / host-device
+copies / explicit synchronizations around the hybrid LFM decode path, or fusing
+the still-separate decode-side runtime calls surrounding Marlin FP8 GEMMs and
+attention/state updates.
+
+Additional launch-context analysis:
+
+- Added `benchmark/analyze_launch_context.py`.
+- Repro:
+
+```bash
+python3 benchmark/analyze_launch_context.py \
+  results/fp8_cg_1_8_16_profile_20260720-105736/torch_profile \
+  --json-out results/fp8_cg_1_8_16_profile_20260720-105736/launch_context.json \
+  --text-out results/fp8_cg_1_8_16_profile_20260720-105736/launch_context.txt
+```
+
+Key finding from `launch_context.txt`: each profiled decode step still has one
+`cudaGraphLaunch`, but also about 30 `cudaLaunchKernel` calls and 16
+`cudaMemcpyAsync` calls. CPU context maps all 196 `cudaMemcpyAsync` calls to
+`aten::copy_`; the largest non-graph launch contexts are `aten::copy_`,
+`aten::add`, `aten::sub`, `aten::fill_`, `aten::index`, `aten::arange`,
+`aten::gather`, and related small metadata/sampling kernels. This is stronger
+evidence than capture-size logs: graph sizes are covered, but decode still has a
+large amount of CPU-driven metadata/copy/sampling work outside the graph.
+
+Experiment C: `cudagraph_copy_inputs=true`
+
+- Config: `configs/fp8_cg_copy_inputs.env`
+- Run: `results/fp8_cg_copy_inputs_20260720-110725`
+- Engine accepted `cudagraph_copy_inputs: True` while keeping default capture
+  sizes `[1, 2, 4, 8, 16]`, `PIECEWISE=5`, `FULL=4`.
+- Results: ERS 69.3312, TBT mean/p50/p95 2.7943 / 2.7684 / 3.0904 ms,
+  TTFT mean/p50/p95 63.596 / 59.010 / 91.963 ms, failures 0, VRAM 5628 MiB.
+- Versus matched FP8 baseline: TBT mean -0.84%, p50 -0.07%, p95 -1.96%,
+  TTFT mean unchanged. This is the best graph-knob run but far below the
+  required 15% decode improvement and not worth 3-run candidate validation.
+- Profile attempt:
+  `results/fp8_cg_copy_inputs_profile_20260720-111424` failed during startup
+  with `CUBLAS_STATUS_ALLOC_FAILED` in dummy run / CUDA graph capture, followed
+  by an illegal-memory-access warning. Non-profile serving is clean, so this is
+  recorded as a profiler-path diagnostic failure, not a request failure.
+
+Updated conclusion: stop CUDA graph knob sweeps. The next high-ROI path is code
+work against the specific outside-graph operations shown by launch-context
+analysis: eliminate or preallocate per-step `aten::copy_` HtoD/DtoD metadata
+copies, avoid CPU scalar syncs around sampling/metadata (`aten::item` /
+`_local_scalar_dense` appears in the CPU op profile), and reduce small
+metadata/sampling kernels that currently launch outside the single decode CUDA
+graph. A good follow-up profile should show fewer `cudaMemcpyAsync` calls and
+fewer than 30 `cudaLaunchKernel` calls per decode step; otherwise it will not
+move the 22.76% overhead bucket.
+
+### Session 10 decode metadata fast path (2026-07-20)
+
+Implemented a local vLLM patch targeting the outside-graph metadata/copy work
+identified in Session 9. The live patch was applied to:
+
+- `.venv/lib/python3.12/site-packages/vllm/v1/worker/gpu_model_runner.py`
+
+Because `.venv` is not tracked, the reproducible patch artifact is:
+
+- `patches/vllm_decode_metadata_fastpath.patch`
+
+Patch content:
+
+- Preallocate device constants for one-token batches:
+  `decode_req_indices_gpu`, `decode_query_pos_gpu`, and
+  `decode_num_scheduled_tokens_gpu`.
+- In `_prepare_inputs`, when `total_num_scheduled_tokens == num_reqs` and every
+  scheduled-token count is 1, reuse those device constants instead of
+  CPU-to-GPU copying `req_indices`, `query_pos`, and `num_scheduled_tokens`.
+- Add a pure-decode fast path for `discard_request_mask`: if every request has
+  already reached decode phase (`num_computed_tokens >= num_prompt_tokens`) and
+  the batch is one-token-per-request, set the CPU mask false and avoid uploading
+  the bool mask every step. A state flag preserves correctness after any earlier
+  chunked-prefill/mixed step that may have set the GPU mask.
+- Did not patch `query_start_loc`: CUDA graph padded batches require padded tail
+  entries to remain `cu_num_tokens[-1]`; a simple arange constant would be
+  unsafe.
+
+Benchmark after first constant fast path:
+
+- Run: `results/fp8_h200shape_20260720-112356`
+- Config/backend: matched FP8 h200-shape, Marlin FP8 kernel.
+- Results: ERS 69.3645, TBT mean/p50/p95 2.7927 / 2.7558 / 3.0831 ms,
+  TTFT mean/p50/p95 63.556 / 58.622 / 90.914 ms, failures 0, VRAM 5638 MiB.
+- Versus matched local FP8 baseline: TBT mean -0.90%, p50 -0.52%, p95 -2.20%.
+
+Profile after first constant fast path:
+
+- Run: `results/fp8_decode_const_profile_20260720-113036`
+- Launch/runtime bucket: 8.386 ms / 21.76% / 593 events vs baseline
+  8.923 ms / 22.76% / 653 events.
+- Launch-context: per profiled step reduced from about 30 `cudaLaunchKernel` and
+  16 `cudaMemcpyAsync` to about 28 `cudaLaunchKernel` and 13 `cudaMemcpyAsync`.
+  HtoD copies per step dropped from 10 to 7.
+
+Benchmark after adding pure-decode `discard_request_mask` fast path:
+
+- Run: `results/fp8_h200shape_20260720-113815`
+- Results: ERS 69.5874, TBT mean/p50/p95 2.7784 / 2.7656 /
+  3.0513 ms, TTFT mean/p50/p95 63.046 / 58.536 / 89.531 ms, failures 0,
+  VRAM 5638 MiB.
+- Versus matched local FP8 baseline: TBT mean -1.40%, p95 -3.20%, ERS +0.44 pp.
+- This is real but far below the candidate threshold (15% decode improvement or
+  TBT <= 3.5 ms official-equivalent target). Do not treat it as a completed
+  candidate.
+
+Profile after adding pure-decode mask fast path:
+
+- Run: `results/fp8_decode_const_mask_profile_20260720-114447`
+- Launch/runtime event count improved further to 581 events, but duration was
+  noisy: 8.663 ms / 22.03%, still better than baseline event count but not
+  better than the first patched profile duration. `cudaMemcpyAsync` count
+  dropped to 148 total in the 12-step window, i.e. about 12-13 per step.
+- Interpretation: the patch reduces event count as intended, but the removed
+  events are too small to materially move TBT by themselves. Remaining work is
+  still dominated by model GEMMs and other outside-graph launches/copies.
+
+Async scheduling probe:
+
+- Added `ASYNC_SCHEDULING=1` support to `scripts/start_server.sh`.
+- Config: `configs/fp8_async_scheduling.env`
+- Run: `results/fp8_async_scheduling_20260720-115252`
+- Results: ERS 69.5171, TBT mean/p95 2.7789 / 3.0717 ms, failures 0,
+  VRAM 5636 MiB.
+- Output text was captured. Basic corruption scan found 2 outputs containing
+  replacement/gibberish-like text fragments. Since latency was not better than
+  the patched sync path, async scheduling is rejected for this workload.
+
+Conclusion: the metadata fast path is a correct, measured micro-optimization
+that reduces launch/runtime events, but it is not enough. The next concrete
+kernel-level step should target the remaining per-step outside-graph operations
+with higher weight: either make the decode input-id path GPU-authoritative
+without enabling async scheduling's output-risk behavior, or fuse/hoist the
+remaining sampling/metadata kernels (`aten::copy_`, `add`, `sub`, `fill_`,
+`index`, `arange`, `gather`, `argmax`) into a small custom decode-metadata /
+sampling kernel. A successful next patch should reduce below ~20
+`cudaLaunchKernel` and ~8 `cudaMemcpyAsync` per decode step; smaller reductions
+are unlikely to reach the 15% decode-improvement gate.
+
+### Session 11 official H200 submission results and final probe queue (2026-07-21)
+
+Official submissions on the organizer H200/MIG backend changed the decision
+boundary materially. The current authoritative score table is maintained in
+`SUBMISSION_RESULTS.md`; key results:
+
+- BF16 `max_num_seqs=8`, `max_num_batched_tokens=512`: ERS 49.69, TTFT
+  p50/p95 49/83 ms, 7 failures, `accuracy_drop=0`.
+- BF16 `max_num_batched_tokens=256`: ERS 46.44, TTFT p50/p95 59/140 ms, TBT
+  median 6 ms, 7 failures. The RTX 3090 local optimum did not transfer.
+- FP8 `fp8_per_tensor`, `max_num_batched_tokens=512`: official repeats
+  60.20 / 59.78 / 60.89 ERS, TBT median 4 ms, 4 failures, `accuracy_drop=0`.
+  Treat this as a stable ~60.2 ERS candidate with about +/-0.5 official noise;
+  60.89 is the best observed point, not a guaranteed repeat.
+- W4A16 G64 MLP10-15 BF16 failed on official H200 despite local speed:
+  Marlin ERS 49.71, TBT median 6 ms, 8 failures; Machete ERS 49.13, TBT median
+  6 ms, 7 failures. Both had `accuracy_drop=0`, so the failure is latency/backend
+  efficiency rather than hidden accuracy.
+
+Interpretation:
+
+- FP8 is the only reliable official win. Native Hopper FP8 is better for this
+  workload than stock compressed-tensors W4 unpack/dequantize.
+- The current bottleneck is decode: candidates with TBT median 4 ms score around
+  60 ERS; candidates with TBT median 6 ms score around 49 ERS. TTFT p50/p95 is
+  broadly similar across the good and bad H200 runs.
+- Local RTX 3090 replay is now smoke/correctness evidence only. It is not a
+  reliable ranking predictor for H200/MIG; both W4 and `batchtok=256` inverted.
+
+Current prepared probes:
+
+- `submission/docker-compose.fp8-seqs16.yml`
+  - Uses existing `siconhoccode/lfm-serving:fp8`.
+  - Same best FP8 config except `--max-num-seqs=16`.
+  - Purpose: test whether the persistent 4 official FP8 failures are admission /
+    queue / deadline failures.
+- `submission/Dockerfile.fp8-metadata-fastpath-local`
+  and `submission/docker-compose.fp8-metadata-fastpath-seqs8.yml`
+  - Builds `siconhoccode/lfm-serving:fp8-metadata-fastpath`.
+  - Applies `patches/apply_vllm_decode_metadata_fastpath.py` inside the
+    `vllm/vllm-openai:v0.22.1` image and keeps best FP8 runtime flags.
+  - Purpose: submit the measured metadata event-count reduction without changing
+    model weights or accuracy behavior.
+- `submission/docker-compose.fp8-metadata-fastpath-seqs16.yml`
+  - Only submit if either `seqs16` or metadata fast-path has useful official
+    signal.
+- Optional W4 probe:
+  `submission/docker-compose.w4a16-g64-mlp10-15-attn10-12-14-bf16.machete.yml`
+  after building
+  `siconhoccode/lfm-serving:w4a16-g64-mlp10-15-attn10-12-14-bf16`.
+  Local trace passed (`TBT mean 2.973 ms`, 0 failures, Marlin autodetect), but
+  local GSM8K limit-200 regressed from 0.660 to 0.605, and official W4 stock
+  backend results make it low-confidence. Use at most one slot.

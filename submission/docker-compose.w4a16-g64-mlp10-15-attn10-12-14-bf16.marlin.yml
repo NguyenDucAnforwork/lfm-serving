@@ -1,0 +1,38 @@
+# Fallback/backend probe for:
+#   /model = lfm2-w4a16-gptq-g64-mlp10-15-attn10-12-14-bf16
+#
+# Same artifact/image as the Machete config, but forces Marlin. Submit only if
+# you want to spend an extra slot testing backend selection behavior.
+services:
+  model:
+    image: siconhoccode/lfm-serving:w4a16-g64-mlp10-15-attn10-12-14-bf16
+    entrypoint:
+      - python3
+      - -m
+      - vllm.entrypoints.openai.api_server
+    command:
+      - --model=/model
+      - --served-model-name=LFM2.5-1.2B-Instruct
+      - --host=0.0.0.0
+      - --port=8000
+      - --dtype=bfloat16
+      - --linear-backend=marlin
+      - --max-model-len=5120
+      - --gpu-memory-utilization=0.70
+      - --tensor-parallel-size=1
+      - --max-num-seqs=8
+      - --max-num-batched-tokens=512
+      - --enable-prefix-caching
+      - --prefix-caching-hash-algo=xxhash
+      - --disable-log-stats
+      - --disable-uvicorn-access-log
+    ports:
+      - "8000:8000"
+    shm_size: "2g"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

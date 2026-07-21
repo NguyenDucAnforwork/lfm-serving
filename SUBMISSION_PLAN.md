@@ -76,11 +76,138 @@ Docker build context.
      show comfortable headroom, a higher value could allow more KV cache /
      concurrency margin. Do not push this past ~0.85 without a way to
      observe real peak VRAM on H200.
-   - c. **W4A16 GPTQ compressed-tensors only after campaign PASS.** The new
-     decode-cost target is S2's official TBT median 4ms -> 3.0-3.5ms. Run:
-     `TRACE=trace_grading_spec.jsonl WORKLOAD=spec W4_RUNS=3 DO_ACCURACY=1 bash scripts/run_decode_cost_campaign.sh`.
-     Submit `submission/docker-compose.w4a16-gptq.yml` only if the generated
-     `candidate_report.md` says PASS.
+   - c. **Do not submit the current W4A16 GPTQ no-conv artifact.** It failed
+     the mandatory local accuracy gate on 2026-07-20: GSM8K limit-200 dropped
+     from BF16 0.665 / FP8 0.700 to W4 0.570. This is a 9.5pp drop vs BF16,
+     far beyond the 2.5pp W4 reject threshold. ARC was acceptable, but GSM8K
+     is enough to reject W4 regardless of potential H200 latency.
+
+## 2.1. Mandatory W4 H200 backend-probe gates
+
+Before spending an official submission slot on any future W4 variant, run both
+gates below. If either fails, do not submit W4. The current no-conv W4 artifact
+already failed this gate and should not be submitted.
+
+### Accuracy gate
+
+Run W4 against the same accuracy checks used to clear FP8:
+
+- ARC Challenge full.
+- GSM8K limit 200.
+- GPQA Diamond official if time permits and dataset access is available.
+- Output coherence and answer format inspection.
+
+If there is any clear degradation, malformed/coherence issue, or credible risk
+that `accuracy_drop`/`f_delta` will regress, stop and keep FP8.
+
+Write the result as a small JSON file for the Docker gate, for example:
+
+```json
+{
+  "pass": true,
+  "accuracy_drop_risk": false,
+  "arc_challenge_full": "pass",
+  "gsm8k_limit_200": "pass",
+  "gpqa_diamond_official": "pass_or_skipped_for_time",
+  "output_coherence_format": "pass"
+}
+```
+
+### Exact Docker gate
+
+The W4 image must contain the no-conv W4 checkpoint. The submitted compose must:
+
+- cold-start with the exact entrypoint/command that will be submitted;
+- expose `/health`;
+- advertise model alias `LFM2.5-1.2B-Instruct`;
+- replay all 420 spec requests with `0` failures and no corrupted/empty output;
+- use `--quantization=compressed-tensors`, not `--quantization=fp8_per_tensor`;
+- preserve the scheduler flags from the FP8 submission (`max_model_len=5120`,
+  `max_num_seqs=8`, `max_num_batched_tokens=512`, prefix caching + xxhash).
+
+Run:
+
+```bash
+# after replacing the placeholder image tag in submission/docker-compose.w4a16-gptq.yml
+ACCURACY_GATE_JSON=results/<accuracy_gate>.json \
+IMAGE_TAG=<local-or-pushed-w4-image-tag> \
+TRACE=trace_grading_spec.jsonl WORKLOAD=spec \
+  bash scripts/run_w4_probe_gates.sh
+```
+
+After the accuracy gate passes, stage the no-conv W4 artifact into the Docker
+build context:
+
+```bash
+bash scripts/prepare_w4_submission.sh --probe \
+  results/<accuracy_gate>.json \
+  artifacts/lfm2-w4a16-gptq-g128-no-conv \
+  submission/docker-compose.w4a16-gptq.yml
+```
+
+Then replace the placeholder image tag, run `scripts/run_w4_probe_gates.sh`, and
+submit only if the emitted `probe_gate.json` has every gate set to `true`.
+
+### How to read the official W4 probe result
+
+- `TBT = 3 ms`, `ERS >= 63`, `f_delta = 1`: Machete has a strong signal; use
+  remaining submissions to tune around this backend.
+- `TBT = 4 ms`, `ERS only 60-61`: reject the W4 direction.
+- ERS below FP8 or increased failures: return to FP8 immediately.
+- Startup failure: likely an unsupported Machete Linear shape; do not spend a
+  second W4 slot.
+- Accuracy drop or `f_delta < 1`: reject W4 even if latency is good.
+
+W4 has now also failed on the official H200 backend. The G64 MLP10-15 BF16
+checkpoint preserved `accuracy_drop=0`, but scored only 49.71 ERS with Marlin
+and 49.13 ERS with Machete, both at TBT median 6 ms. This rejects the current
+stock compressed-tensors W4 direction for H200/MIG: local RTX 3090 speed did not
+transfer because Hopper native FP8 beats W4 unpack/dequantize for this workload.
+Do not spend more W4 slots unless a new H200 profile shows a specific W4 kernel
+bottleneck that can be fixed. The newer `mlp10-15-attn10-12-14` checkpoint is
+packaged only as a one-slot backend probe, not as a validated candidate.
+
+The first profile-backed CUDA graph coverage test was also negative: explicitly
+capturing batch sizes 1-8, with and without retaining size 16, did not materially
+reduce TBT and left the launch/runtime profile bucket unchanged
+(8.900 ms / 22.75% / 653 events vs 8.923 ms / 22.76% / 653 events baseline).
+`cudagraph_copy_inputs=true` was also only a small win locally
+(TBT mean 2.7943 ms vs 2.8180 ms baseline, failures 0) and remains below the
+candidate threshold. Do not continue scheduler/cache/capture-size sweeps unless
+a new profile shows a specific graph miss. The remaining kernel-level direction
+is to reduce the outside-graph event count directly: each profiled decode step
+still has one `cudaGraphLaunch` plus about 30 `cudaLaunchKernel` and 16
+`cudaMemcpyAsync` calls, with memcopies attributed to `aten::copy_` and launches
+coming from small metadata/sampling ops (`copy_`, `add`, `sub`, `fill_`,
+`index`, `arange`, `gather`, etc.).
+
+A local vLLM decode-metadata fast path now proves this direction but is not a
+candidate by itself. The patch artifact is
+`patches/vllm_decode_metadata_fastpath.patch`; it preallocates one-token decode
+GPU constants and avoids per-step uploads for `req_indices`, `query_pos`,
+`num_scheduled_tokens`, and pure-decode `discard_request_mask`. Best local run:
+`results/fp8_h200shape_20260720-113815`, failures 0, ERS 69.5874, TBT
+mean/p50/p95 2.7784 / 2.7656 / 3.0513 ms. Profile event count improved
+baseline launch/runtime 653 events to 581 events, but the TBT gain is only
+~1.4% mean / ~3.2% p95. It is now packaged as
+`siconhoccode/lfm-serving:fp8-metadata-fastpath` because the remaining official
+FP8 gap is small and official transfer is unknown; submit it only as an
+isolated FP8 probe, then submit the seqs16 combination only if either axis shows
+signal.
+`ASYNC_SCHEDULING=1` was tested as an evidence-driven copy-path probe but
+rejected: no material latency gain and captured output contained 2
+gibberish/replacement-character-like fragments.
+
+Current official best is FP8 `fp8_per_tensor`, `max_num_seqs=8`,
+`max_num_batched_tokens=512`: ERS 60.89 best observed, 59.78-60.89 across three
+identical official runs, TBT median 4 ms, failures 4, accuracy drop 0. The
+immediate probe order is:
+
+1. `submission/docker-compose.fp8-seqs16.yml` with the existing FP8 image.
+2. Build/push `siconhoccode/lfm-serving:fp8-metadata-fastpath`, submit
+   `submission/docker-compose.fp8-metadata-fastpath-seqs8.yml`.
+3. Submit `submission/docker-compose.fp8-metadata-fastpath-seqs16.yml` only if
+   (1) or (2) improves official failures/ERS.
 
 ## 3. Final-5 selection (after the online round ends)
 
@@ -100,10 +227,10 @@ Docker build context.
   with a hard CUDA error, not just a config warning.
 - Do not include any variant using `--quantization bitsandbytes` (W4) — it
   measured *worse* than the unquantized baseline (T2, EXPERIMENTS.md).
-- Do not include W4A16 GPTQ unless backend logs prove Machete or Marlin for
-  `CompressedTensorsWNA16`, 3 clean H200/spec runs meet TBT/failure gates, and
-  accuracy diff is non-negative. The repository now has scripts to enforce
-  those gates.
+- Do not include the tested W4A16 GPTQ G64 MLP10-15 BF16 submissions in the
+  final 5; both official Marlin and Machete runs were slower than FP8 and near
+  BF16 score. Only consider a future W4 if H200 profiling identifies a fixable
+  W4-specific kernel bottleneck and a new candidate passes the full gate.
 
 ## 4. Unresolved risks (carry into the decision)
 

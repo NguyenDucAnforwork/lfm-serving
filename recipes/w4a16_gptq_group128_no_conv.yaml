@@ -1,0 +1,25 @@
+lfm2_w4a16_gptq_stage:
+  quantization_modifiers:
+    GPTQModifier:
+      block_size: 128
+      dampening_frac: 0.01
+      actorder: static
+      offload_hessians: true
+      ignore:
+        - lm_head
+        # vLLM's LFM2 ShortConv does not pass quant_config to its projection
+        # Linear layers, so packed conv tensors cannot be loaded. Keep the
+        # short-conv path in BF16 and quantize attention/MLP GEMMs.
+        - re:.*\.conv\..*
+      config_groups:
+        group_0:
+          targets:
+            - Linear
+          input_activations: null
+          output_activations: null
+          weights:
+            num_bits: 4
+            type: int
+            symmetric: true
+            strategy: group
+            group_size: 128

@@ -73,12 +73,38 @@ def event_duration_us(event: dict[str, Any]) -> float:
     return 0.0
 
 
+def include_event(event: dict[str, Any]) -> bool:
+    """Keep non-overlapping CUDA/kernel/runtime events.
+
+    Torch profiler Chrome traces contain large wrapper ranges such as
+    "PyTorch Profiler", "ProfilerStep", and execute_context annotations. Those
+    overlap the actual CUDA kernels and make bucket percentages meaningless if
+    summed together. For decode-cost attribution we want the concrete kernel /
+    CUDA runtime work.
+    """
+
+    cat = str(event.get("cat", ""))
+    name = str(event.get("name", ""))
+    if cat in {"Trace", "user_annotation", "gpu_user_annotation", "cpu_op"}:
+        return False
+    if name.startswith("ProfilerStep") or name.startswith("PyTorch Profiler"):
+        return False
+    return cat in {"kernel", "cuda_runtime", "cuda_driver", "gpu_memcpy", "overhead"}
+
+
 def norm(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip().lower()
 
 
 def classify(name: str, cat: str = "") -> str:
     s = norm(f"{name} {cat}")
+
+    if re.search(
+        r"(attention|flash.?attn|flash_fwd|paged.?attention|unified.?attention|"
+        r"flashinfer|xformers|kv.?cache|reshape_and_cache|rotary|rope)",
+        s,
+    ):
+        return "attention"
 
     # Order matters. Fused W4 kernels often include quantization-ish words but
     # should count as GEMM if the actual work is Marlin/Machete/CUTLASS matmul.
@@ -106,13 +132,6 @@ def classify(name: str, cat: str = "") -> str:
         return "gated_conv_state"
 
     if re.search(
-        r"(attention|flash.?attn|paged.?attention|unified.?attention|"
-        r"flashinfer|xformers|kv.?cache|reshape_and_cache|rotary|rope)",
-        s,
-    ):
-        return "attention"
-
-    if re.search(
         r"(cudalaunch|cuda_launch|cuda kernel launch|cudaapis|cuda runtime|"
         r"cudamemcpy|cudaMemcpy|cudadevicesynchronize|cudaStreamSynchronize|"
         r"cudaevent|cuda graph|cudaGraphLaunch|profilerstep|python)",
@@ -133,6 +152,8 @@ def summarize(files: list[Path], top_n: int) -> dict[str, Any]:
 
     for path in files:
         for event in load_trace_events(path):
+            if not include_event(event):
+                continue
             dur_us = event_duration_us(event)
             if dur_us <= 0:
                 continue

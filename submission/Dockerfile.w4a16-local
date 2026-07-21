@@ -1,0 +1,27 @@
+# Local-build W4A16 submission image.
+#
+# Build context must be the repository root:
+#   docker build -f submission/Dockerfile.w4a16-local -t <image>:<tag> .
+#
+# Before building, rsync/copy the selected W4A16 compressed-tensors checkpoint
+# into:
+#   submission/model/
+#
+# The image intentionally has no ENTRYPOINT/CMD. The competition compose fixes
+# the entrypoint to `python3 -m vllm.entrypoints.openai.api_server` and passes
+# all runtime flags in `command:`.
+FROM vllm/vllm-openai:v0.22.1
+
+# Required by --prefix-caching-hash-algo=xxhash.
+RUN pip install --no-cache-dir xxhash
+
+# Must contain the full checkpoint directory: config.json, tokenizer files,
+# safetensors, and compressed-tensors quantization metadata.
+COPY submission/model /model
+
+ENV HF_HUB_OFFLINE=1 \
+    TRANSFORMERS_OFFLINE=1 \
+    VLLM_NO_USAGE_STATS=1 \
+    DO_NOT_TRACK=1
+
+EXPOSE 8000

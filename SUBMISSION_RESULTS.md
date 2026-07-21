@@ -1,187 +1,39 @@
 # Official Submission Results
 
-This file records the official Viettel BTC portal results obtained so far for the `LFM2.5-1.2B-Instruct` serving submission. These measurements were produced on the organizer's grading infrastructure and should be treated as more authoritative than the local RTX 3090 replay results.
+This file records official Viettel BTC portal results for
+`LFM2.5-1.2B-Instruct`. These measurements were produced on the organizer's
+H200/MIG grading infrastructure and are more authoritative than local RTX 3090
+replay results.
 
 ## Environment and submission format
 
 - Base runtime: `vllm/vllm-openai:v0.22.1`
-- Model: `LFM2.5-1.2B-Instruct`
-- Docker image tags used:
-  - `siconhoccode/lfm-serving:safe-bf16-v1`
-  - `siconhoccode/lfm-serving:fp8-v1`
-- Both tags point to the same Docker image; BF16 versus FP8 is selected entirely through the submitted Docker Compose command.
+- Model alias: `LFM2.5-1.2B-Instruct`
 - Official trace size: 420 requests
-- Accuracy gate result for every successful measured run: `accuracy_drop = 0`, `f_delta = 1`, `penalty = 1`
+- Best quantization path so far: `--quantization=fp8_per_tensor`
+- Legacy `--quantization=fp8` remains rejected due incoherent local output.
+- W4 compressed-tensors configs must not pass
+  `--quantization=compressed-tensors` explicitly; vLLM 0.22.1 must autodetect it
+  from `/model/config.json`. The explicit flag caused a competition-container
+  startup failure.
 
 ## Submission summary
 
-| ID | Runtime configuration | Status | ERS / final score | TTFT p50 | TTFT p95 | TBT median | Failed requests | Accuracy drop | Decision |
-|---|---|---|---:|---:|---:|---:|---:|---:|---|
-| S0 | BF16 compose referencing nonexistent tag `siconhoccode/lfm-serving:safe-bf16` | Failed before grading | — | — | — | — | — | — | Packaging error; fixed by using the `-v1` tag |
-| S1 | BF16, `max_num_batched_tokens=512` | Success | **49.69** | 49 ms | 83 ms | Not exposed | 7 | 0 | Valid safe baseline |
-| S2 | FP8 per-tensor, `max_num_batched_tokens=512` | Success | **60.20** | 52 ms | 85 ms | 4 ms | 4 | 0 | **Current official best** |
-| S3 | BF16, `max_num_batched_tokens=256` | Success | **46.44** | 59 ms | 140 ms | 6 ms | 7 | 0 | Rejected; smaller prefill budget regressed both TTFT and ERS |
+| ID | Candidate | ERS | TTFT p50 | TTFT p95 | TBT median | Failed requests | Accuracy drop | Decision |
+|---|---|---:|---:|---:|---:|---:|---:|---|
+| S0 | BF16 but compose referenced wrong `safe-bf16` image tag | — | — | — | — | — | — | Packaging failure; not graded |
+| S1 | BF16, `max_num_seqs=8`, `max_num_batched_tokens=512` | 49.69 | 49 ms | 83 ms | not exposed | 7 | 0 | Valid safe baseline |
+| S2 | BF16, `max_num_batched_tokens=256` | 46.44 | 59 ms | 140 ms | 6 ms | 7 | 0 | Rejected; local optimum did not transfer |
+| S3 | FP8 per-tensor, `max_num_batched_tokens=512` | 60.20 | 52 ms | 85 ms | 4 ms | 4 | 0 | Strong candidate |
+| S4 | FP8 repeat, same config | 59.78 | 53 ms | 83 ms | 4 ms | 4 | 0 | Confirms official noise band |
+| S5 | FP8 repeat, same config | **60.89** | 50 ms | 85 ms | 4 ms | 4 | 0 | Current best official result |
+| S6 | W4A16 G64, MLP 10-15 BF16, Marlin | 49.71 | 49 ms | 83 ms | 6 ms | 8 | 0 | Rejected; W4 backend slower on H200 |
+| S7 | Same W4 checkpoint, Machete | 49.13 | 54 ms | 84 ms | 6 ms | 7 | 0 | Rejected; backend switch did not help |
 
-## Detailed results
-
-### S0 — Invalid Docker image tag
-
-The first BF16 submission referenced:
-
-```yaml
-image: siconhoccode/lfm-serving:safe-bf16
-```
-
-Only the following tag had actually been pushed:
+## Current best official configuration
 
 ```text
-siconhoccode/lfm-serving:safe-bf16-v1
-```
-
-The organizer therefore could not pull the requested image, and the submission failed before benchmarking. The Docker image itself was not the problem. The compose file was corrected to use the exact pushed tag.
-
-### S1 — BF16 baseline, batch-token budget 512
-
-Key command settings:
-
-```text
---dtype=bfloat16
---max-model-len=5120
---gpu-memory-utilization=0.70
---tensor-parallel-size=1
---max-num-seqs=8
---max-num-batched-tokens=512
---enable-prefix-caching
---prefix-caching-hash-algo=xxhash
---disable-log-stats
---disable-uvicorn-access-log
-```
-
-Official metrics:
-
-```text
-ERS / final score: 49.69
-Total requests:    420
-TTFT p50:          49 ms
-TTFT p95:          83 ms
-Failed requests:   7
-Accuracy drop:     0
-f_delta:           1
-Penalty:           1
-Warmup count:      0
-```
-
-Interpretation:
-
-- The submission was fully valid and passed the accuracy gate.
-- TTFT was already reasonably low.
-- The lower score relative to FP8 indicates that decode cost, rather than prefill latency alone, was the main performance bottleneck.
-- Seven failed requests hurt the score, but they were not large enough to explain the full gap to the FP8 result.
-
-### S2 — FP8 per-tensor, batch-token budget 512
-
-The FP8 run used the same general serving shape as S1, with the additional flag:
-
-```text
---quantization=fp8_per_tensor
-```
-
-The legacy `--quantization=fp8` path was deliberately not used because it had produced incoherent output during local testing.
-
-Official metrics:
-
-```text
-ERS / final score: 60.20
-Total requests:    420
-TTFT p50:          52 ms
-TTFT p95:          85 ms
-TBT median:        4 ms
-Failed requests:   4
-Accuracy drop:     0
-f_delta:           1
-Penalty:           1
-Warmup count:      0
-```
-
-Improvement over BF16-512:
-
-```text
-Absolute ERS gain:   +10.51 points
-Relative ERS gain:   approximately +21.2%
-Failed requests:     7 -> 4
-TTFT p50:            49 -> 52 ms
-TTFT p95:            83 -> 85 ms
-Accuracy drop:       unchanged at 0
-```
-
-Interpretation:
-
-- FP8 produced a large and clean official gain without measurable accuracy loss.
-- TTFT stayed almost unchanged, so most of the gain came from faster token generation rather than faster prompt processing.
-- The result validates weight quantization as the strongest mechanism tested so far.
-- This is the current official best configuration and should remain the reference point for future experiments.
-
-### S3 — BF16, batch-token budget 256
-
-This run changed only:
-
-```text
---max-num-batched-tokens=512 -> 256
-```
-
-Official metrics:
-
-```text
-ERS / final score: 46.44
-Total requests:    420
-TTFT p50:          59 ms
-TTFT p95:          140 ms
-TBT median:        6 ms
-Failed requests:   7
-Accuracy drop:     0
-f_delta:           1
-Penalty:           1
-Warmup count:      0
-```
-
-Regression relative to BF16-512:
-
-```text
-ERS change:        -3.25 points
-TTFT p50:          49 -> 59 ms
-TTFT p95:          83 -> 140 ms
-Failed requests:   unchanged at 7
-```
-
-Interpretation:
-
-- The local RTX 3090 optimum at 256 did not transfer to the official H200 grading environment.
-- A 256-token scheduler budget was too small for the official workload and caused long prefills to be split across more scheduler iterations.
-- The added scheduling overhead worsened both median and tail TTFT, while TBT remained worse than the FP8 result.
-- FP8-256 should not be prioritized solely on the basis of the previous local optimum.
-
-## Main conclusions
-
-1. **Packaging must use exact pushed Docker tags.** The initial failure was caused by referencing `safe-bf16` instead of `safe-bf16-v1`.
-2. **FP8 per-tensor quantization is the only major official win found so far.** It improved ERS from 49.69 to 60.20 while preserving accuracy.
-3. **The current official bottleneck is decode efficiency.** FP8 materially improved the score while leaving TTFT nearly unchanged.
-4. **Local scheduler optima do not necessarily transfer to the official H200 environment.** Reducing `max_num_batched_tokens` from 512 to 256 caused a clear regression.
-5. **Future work should be mechanism-driven rather than a blind parameter sweep.** The next high-value directions are profiling the FP8 decode step, evaluating a genuinely faster online INT4/TorchAO path, testing mixed precision if full INT4 is unstable, and considering FP8 KV cache or profile-guided CUDA graph/compile changes only when measurements identify corresponding bottlenecks.
-
-Session 4/5 update: the prepared mechanism-driven path is W4A16 GPTQ with
-compressed-tensors, group_size=128, symmetric weights, `lm_head` unquantized,
-and forced Machete first / Marlin fallback. The repository now contains
-validators and `scripts/run_decode_cost_campaign.sh` to require backend proof,
-3 clean spec runs, no additional failures, and accuracy parity before a W4
-submission can be packaged. A local CUDA 12.6/vLLM 0.10.0 diagnostic run was
-also performed on RTX 3090; legacy `--quantization=fp8` did not improve decode
-versus BF16 and remains rejected. These local CUDA 12.6 numbers are not
-official evidence because they use a different vLLM version and Transformers
-backend fallback.
-
-## Current best submission
-
-```text
+Image:                    siconhoccode/lfm-serving:fp8
 Quantization:             fp8_per_tensor
 max_model_len:            5120
 max_num_seqs:             8
@@ -189,27 +41,66 @@ max_num_batched_tokens:   512
 gpu_memory_utilization:   0.70
 prefix caching:           enabled
 prefix hash:              xxhash
-Official ERS:             60.20
+Official ERS best:        60.89
+Official ERS typical:     about 60.2 +/- 0.5
+TBT median:               4 ms
+Failures:                 4 / 420
 Accuracy drop:            0
 ```
 
-## Recommended target
+## Conclusions from official submissions
 
-The immediate engineering target is not an arbitrary leaderboard score but a measurable reduction in decode cost:
+1. **FP8 is the reliable best path.** It improves BF16 from 49.69 ERS to about
+   60.2 ERS, reduces failures from 7 to 4, and preserves `accuracy_drop=0`.
+2. **The dominant remaining gap is decode.** Good and bad candidates have
+   similar TTFT p50/p95, while ERS tracks TBT: FP8 at 4 ms scores around 60,
+   W4/BF16 at 6 ms scores around 49.
+3. **Stock W4 compressed-tensors is rejected on official H200.** Local RTX 3090
+   ranked W4 faster than FP8, but official H200 reversed the ranking:
+   FP8 median TBT 4 ms, W4 median TBT 6 ms. Both Marlin and Machete were poor,
+   so the issue is not a simple backend selection mistake. Hidden accuracy is
+   also not the cause because `accuracy_drop=0`.
+4. **Local RTX 3090 is useful for correctness and failure filtering, not winner
+   prediction.** Two major local-to-official inversions occurred:
+   `max_num_batched_tokens=256` and W4 G64.
+5. **The remaining easy point is likely failure/tail handling.** FP8 still has
+   4 failures in all official repeats. If these are queue/deadline failures,
+   `max_num_seqs=16` may recover some score without touching accuracy.
 
-```text
-Current TBT median: 4 ms
-Near-term target:   approximately 3.0-3.5 ms
-```
+## Current submit/probe queue
 
-Reaching that range without increasing TTFT tails, failure count, or accuracy drop would provide a technically justified path from the current 60.20 score toward the mid-to-high 60s.
+Submit in this order:
 
-Concrete next run:
+1. `submission/docker-compose.fp8-seqs16.yml`
+   - Image: `siconhoccode/lfm-serving:fp8`
+   - Same validated FP8 config, only `max_num_seqs=8 -> 16`
+   - Goal: test whether official 4 failures are queue/deadline starvation.
+2. Build/push `siconhoccode/lfm-serving:fp8-metadata-fastpath`, then submit
+   `submission/docker-compose.fp8-metadata-fastpath-seqs8.yml`
+   - Same runtime flags as best FP8.
+   - Bakes local vLLM decode metadata fast-path patch.
+   - Goal: test whether the measured local launch/copy event reduction transfers.
+3. Submit `submission/docker-compose.fp8-metadata-fastpath-seqs16.yml` only if
+   either probe above shows useful signal.
+4. Optional one-slot W4 probe:
+   `submission/docker-compose.w4a16-g64-mlp10-15-attn10-12-14-bf16.machete.yml`
+   after building `siconhoccode/lfm-serving:w4a16-g64-mlp10-15-attn10-12-14-bf16`.
+   This is not expected to beat FP8; local trace passed but GSM8K regressed.
 
-```bash
-TRACE=trace_grading_spec.jsonl WORKLOAD=spec W4_RUNS=3 DO_ACCURACY=1 \
-  bash scripts/run_decode_cost_campaign.sh
-```
+## Related image/config inventory
 
-If no candidate passes, use `kernel_next_step.json` from that campaign's FP8
-profile as the required concrete kernel-level next step.
+| Image | Status | Configs |
+|---|---|---|
+| `siconhoccode/lfm-serving:fp8` | Already pushed; current best official image | `docker-compose.fp8.yml`, `docker-compose.fp8-seqs16.yml` |
+| `siconhoccode/lfm-serving:w4a16-g64-mlp10-15-bf16` | Already pushed; official rejected | W4 MLP10-15 Marlin/Machete |
+| `siconhoccode/lfm-serving:fp8-metadata-fastpath` | Needs local build/push | `docker-compose.fp8-metadata-fastpath-seqs8.yml`, `docker-compose.fp8-metadata-fastpath-seqs16.yml` |
+| `siconhoccode/lfm-serving:w4a16-g64-mlp10-15-attn10-12-14-bf16` | Needs local build/push | `docker-compose.w4a16-g64-mlp10-15-attn10-12-14-bf16.machete.yml` |
+
+## Accuracy notes
+
+- Official successful submissions so far report `accuracy_drop=0`.
+- Local FP8 accuracy was previously cleared on ARC, GSM8K, and official
+  `gpqa_diamond_zeroshot` with the gated dataset after access was granted.
+- W4 mixed-precision candidates can preserve ARC but repeatedly regress GSM8K
+  by more than the 2.5 pp preferred threshold. Treat W4 as latency/backend probe
+  only unless a new checkpoint passes the full accuracy gate.

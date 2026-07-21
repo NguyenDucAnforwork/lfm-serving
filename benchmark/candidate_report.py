@@ -96,6 +96,7 @@ def main() -> None:
     ap.add_argument("--baseline-tbt-p50-ms", type=float, default=4.0)
     ap.add_argument("--baseline-failed-count", type=int, default=4)
     ap.add_argument("--accuracy-diff-json", default=None)
+    ap.add_argument("--output-diff-json", default=None)
     ap.add_argument("--docker-compose", default=None)
     ap.add_argument("--json-out", default=None)
     ap.add_argument("--md-out", default=None)
@@ -125,6 +126,7 @@ def main() -> None:
     vram = [r["vram_peak_mib"] for r in runs if isinstance(r["vram_peak_mib"], int)]
 
     accuracy = load_json(Path(args.accuracy_diff_json)) if args.accuracy_diff_json else None
+    output_diff = load_json(Path(args.output_diff_json)) if args.output_diff_json else None
     compose_path = Path(args.docker_compose) if args.docker_compose else None
     compose_ok, compose_failures = compose_flags_valid(compose_path, args.candidate)
 
@@ -172,6 +174,7 @@ def main() -> None:
         },
         "runs": runs,
         "accuracy_diff": accuracy,
+        "output_diff": output_diff,
         "docker_compose": str(compose_path) if compose_path else None,
         "docker_compose_failures": compose_failures,
         "metrics": {
@@ -234,6 +237,24 @@ def main() -> None:
                 f"- changed outputs: {accuracy.get('changed_output_count')}",
             ]
         )
+
+    if output_diff is not None:
+        lines.extend(
+            [
+                "",
+                "## Trace output diff",
+                "",
+                f"- common requests: {output_diff.get('common_requests')}",
+                f"- changed outputs: {output_diff.get('changed_count')}",
+                f"- unchanged outputs: {output_diff.get('unchanged_count')}",
+            ]
+        )
+        groups = output_diff.get("groups") or {}
+        for group_name in ("by_turn", "by_input_bucket", "by_answer_format_pair"):
+            group = groups.get(group_name)
+            if not group:
+                continue
+            lines.append(f"- {group_name}: {group}")
 
     md = "\n".join(lines) + "\n"
     print(md)

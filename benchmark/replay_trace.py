@@ -159,6 +159,7 @@ async def run_conversation(
     ignore_eos: bool,
     timeout_s: float,
     results: list,
+    keep_output_text: bool,
     workload: str = "legacy",
     progress_cb=None,
 ):
@@ -208,8 +209,11 @@ async def run_conversation(
         if workload == "spec":
             # Thread the reply back so the next turn is a real extension.
             history.append({"role": "assistant", "content": record.get("output_text") or ""})
-        # Keep result files lean: drop the (large) captured text after use.
-        record.pop("output_text", None)
+        if not keep_output_text:
+            # Keep default result files lean; opt in to captured text when
+            # exact changed-sample or malformed/truncated-output analysis is
+            # required for a promising candidate.
+            record.pop("output_text", None)
         if progress_cb:
             progress_cb(record)
         if row.turn_idx != last_turn_idx:
@@ -248,7 +252,7 @@ async def run_benchmark(args) -> list[dict]:
             run_conversation(
                 conv_id, conv_rows, trace_start, prompt_builder, session,
                 args.base_url, args.model, args.ignore_eos, args.timeout, results,
-                args.workload, progress_cb,
+                args.keep_output_text, args.workload, progress_cb,
             )
             for conv_id, conv_rows in by_conv.items()
         ]
@@ -314,6 +318,13 @@ def main():
     )
     ap.add_argument("--no-ignore-eos", dest="ignore_eos", action="store_false")
     ap.add_argument("--verbose", action="store_true")
+    ap.add_argument(
+        "--keep-output-text",
+        action="store_true",
+        help="Persist generated text in results.jsonl/results.csv for exact "
+             "changed-sample and malformed/truncated-output analysis. Default "
+             "off to keep benchmark artifacts small.",
+    )
     args = ap.parse_args()
     if args.tokenizer_model is None:
         args.tokenizer_model = args.model

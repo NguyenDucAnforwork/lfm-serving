@@ -8,6 +8,7 @@
 #
 # Optional env:
 #   TRACE=trace_grading_spec.jsonl WORKLOAD=spec MODEL_NAME=LFM2.5-1.2B-Instruct TOKENIZER_MODEL=LiquidAI/LFM2.5-1.2B-Instruct
+#   KEEP_OUTPUT_TEXT=1  # persist generated text for exact output-diff analysis
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -58,8 +59,16 @@ if [[ "$READY" != "1" ]]; then
 fi
 
 sleep 2
-ENGINE_PID=$(nvidia-smi --query-compute-apps=pid,process_name --format=csv,noheader 2>/dev/null \
+ENGINE_PID=$(grep -oE 'EngineCore pid=[0-9]+' "$LOG_FILE" 2>/dev/null \
+  | sed -E 's/.*pid=([0-9]+)/\1/' | tail -1)
+if [[ -n "$ENGINE_PID" ]] && ! nvidia-smi --query-compute-apps=pid --format=csv,noheader,nounits 2>/dev/null \
+  | awk '{gsub(/ /,""); print}' | grep -qx "$ENGINE_PID"; then
+  ENGINE_PID=""
+fi
+if [[ -z "$ENGINE_PID" ]]; then
+  ENGINE_PID=$(nvidia-smi --query-compute-apps=pid,process_name --format=csv,noheader 2>/dev/null \
   | awk -F',' '/VLLM::EngineCore/{gsub(/ /,"",$1); print $1}' | tail -1)
+fi
 if [[ -z "$ENGINE_PID" ]]; then
   ENGINE_PID=$(nvidia-smi --query-compute-apps=pid,used_memory --format=csv,noheader,nounits 2>/dev/null \
     | awk -F',' '{gsub(/ /,"",$1); gsub(/ /,"",$2); if ($2+0 > best) {best=$2+0; pid=$1}} END {if (pid) print pid}')
@@ -78,12 +87,17 @@ fi
 
 # shellcheck disable=SC1091
 source "$PROJECT_DIR/.venv/bin/activate"
+REPLAY_EXTRA_ARGS=()
+if [[ "${KEEP_OUTPUT_TEXT:-0}" == "1" ]]; then
+  REPLAY_EXTRA_ARGS+=(--keep-output-text)
+fi
 python3 "$PROJECT_DIR/benchmark/replay_trace.py" \
   --trace "$PROJECT_DIR/$TRACE" \
   --workload "$WORKLOAD" \
   --model "$MODEL_NAME" \
   --tokenizer-model "$TOKENIZER_MODEL" \
-  --name "$RUN_ID" --out-dir "$OUT_DIR" --verbose "$@" 2>&1 | tee "$OUT_DIR/replay.log"
+  --name "$RUN_ID" --out-dir "$OUT_DIR" --verbose \
+  "${REPLAY_EXTRA_ARGS[@]}" "$@" 2>&1 | tee "$OUT_DIR/replay.log"
 REPLAY_STATUS=${PIPESTATUS[0]}
 
 kill "$MONITOR_PID" 2>/dev/null

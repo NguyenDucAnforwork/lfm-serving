@@ -24,7 +24,7 @@ source "$PROJECT_DIR/configs/${CONFIG_NAME}.env"
 set +a
 
 export LOG_FILE="$PROJECT_DIR/results/$RUN_NAME/server.log"
-export PROFILER_CONFIG="{\"profiler\":\"torch\",\"torch_profiler_dir\":\"$PROFILE_DIR\",\"ignore_frontend\":true,\"wait_iterations\":5,\"warmup_iterations\":2,\"active_iterations\":12,\"torch_profiler_record_shapes\":true,\"torch_profiler_with_stack\":false,\"torch_profiler_with_memory\":false,\"torch_profiler_with_flops\":false}"
+export PROFILER_CONFIG="{\"profiler\":\"torch\",\"torch_profiler_dir\":\"$PROFILE_DIR\",\"ignore_frontend\":false,\"wait_iterations\":5,\"warmup_iterations\":2,\"active_iterations\":12,\"torch_profiler_record_shapes\":true,\"torch_profiler_with_stack\":false,\"torch_profiler_with_memory\":false,\"torch_profiler_with_flops\":false}"
 BASE_URL="${BASE_URL:-http://127.0.0.1:${PORT:-8000}}"
 
 bash scripts/start_server.sh &
@@ -44,8 +44,10 @@ if [[ "$READY" != "1" ]]; then
   exit 1
 fi
 
+PYTHON_BIN="${PYTHON_BIN:-$PROJECT_DIR/.venv/bin/python}"
+
 curl -fsS -X POST "$BASE_URL/start_profile"
-python benchmark/replay_trace.py \
+"$PYTHON_BIN" benchmark/replay_trace.py \
   --trace "$TRACE" \
   --workload "$WORKLOAD" \
   --name "$RUN_NAME" \
@@ -56,12 +58,12 @@ python benchmark/replay_trace.py \
   --verbose
 curl -fsS -X POST "$BASE_URL/stop_profile"
 
-python benchmark/summarize_run.py "results/$RUN_NAME/results.jsonl" \
+"$PYTHON_BIN" benchmark/summarize_run.py "results/$RUN_NAME/results.jsonl" \
   > "results/$RUN_NAME/summary_ext.json"
-python benchmark/analyze_failures.py "results/$RUN_NAME/results.jsonl" \
+"$PYTHON_BIN" benchmark/analyze_failures.py "results/$RUN_NAME/results.jsonl" \
   --server-log "results/$RUN_NAME/server.log" \
   > "results/$RUN_NAME/failure_analysis.txt"
-python benchmark/analyze_profile_trace.py "results/$RUN_NAME/torch_profile" \
+"$PYTHON_BIN" benchmark/analyze_profile_trace.py "results/$RUN_NAME/torch_profile" \
   --json-out "results/$RUN_NAME/profile_buckets.json" \
   > "results/$RUN_NAME/profile_buckets.txt"
 

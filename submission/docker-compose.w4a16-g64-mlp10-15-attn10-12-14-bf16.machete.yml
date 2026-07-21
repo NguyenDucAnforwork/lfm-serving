@@ -1,0 +1,42 @@
+# H200 backend probe for:
+#   /model = lfm2-w4a16-gptq-g64-mlp10-15-attn10-12-14-bf16
+#
+# IMPORTANT:
+# - Do NOT pass --quantization=compressed-tensors. vLLM 0.22.1 must autodetect
+#   compressed-tensors from /model/config.json; explicit flag caused startup
+#   failure in the competition container.
+# - This candidate is a speed/backend probe, not accuracy-cleared: local gate
+#   passed trace but failed GSM8K limit 200.
+services:
+  model:
+    image: siconhoccode/lfm-serving:w4a16-g64-mlp10-15-attn10-12-14-bf16
+    entrypoint:
+      - python3
+      - -m
+      - vllm.entrypoints.openai.api_server
+    command:
+      - --model=/model
+      - --served-model-name=LFM2.5-1.2B-Instruct
+      - --host=0.0.0.0
+      - --port=8000
+      - --dtype=bfloat16
+      - --linear-backend=machete
+      - --max-model-len=5120
+      - --gpu-memory-utilization=0.70
+      - --tensor-parallel-size=1
+      - --max-num-seqs=8
+      - --max-num-batched-tokens=512
+      - --enable-prefix-caching
+      - --prefix-caching-hash-algo=xxhash
+      - --disable-log-stats
+      - --disable-uvicorn-access-log
+    ports:
+      - "8000:8000"
+    shm_size: "2g"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

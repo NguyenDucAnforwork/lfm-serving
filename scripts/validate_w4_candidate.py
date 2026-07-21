@@ -5,7 +5,7 @@ This is a guardrail for the decode-cost experiments. It checks the constraints
 from the goal before a W4 run is considered a real candidate:
 
   * compressed-tensors quantization, not bitsandbytes;
-  * W4 int weights, symmetric, group_size=128;
+  * W4 int weights, symmetric, expected group_size;
   * lm_head ignored/unquantized;
   * no fp8_per_tensor / KV FP8 mixed into the same W4 run config;
   * server log confirms vLLM selected Marlin or Machete for
@@ -52,6 +52,7 @@ def main() -> None:
     ap.add_argument("--run-dir", default=None, help="Optional results/<run> directory")
     ap.add_argument("--config", default=None, help="Optional config.env path; defaults to run-dir/config.env")
     ap.add_argument("--server-log", default=None, help="Optional server.log path; defaults to run-dir/server.log")
+    ap.add_argument("--expected-group-size", type=int, default=128, help="Expected W4 group size")
     args = ap.parse_args()
 
     artifact = Path(args.artifact)
@@ -72,7 +73,11 @@ def main() -> None:
         require(weights.get("type") == "int", "weight type is not int", failures)
         require(weights.get("symmetric") is True, "weight symmetric is not true", failures)
         require(weights.get("strategy") == "group", "weight strategy is not group", failures)
-        require(weights.get("group_size") == 128, "weight group_size is not 128", failures)
+        require(
+            weights.get("group_size") == args.expected_group_size,
+            f"weight group_size is not {args.expected_group_size}",
+            failures,
+        )
         require("lm_head" in ignore, "lm_head is not listed in quantization_config.ignore", failures)
         require("bitsandbytes" not in json.dumps(qcfg).lower(), "artifact mentions bitsandbytes", failures)
 

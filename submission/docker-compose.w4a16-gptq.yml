@@ -10,7 +10,9 @@
 # scripts/quantize_w4a16_gptq.py into submission/model before building the
 # Docker image. The artifact must have lm_head ignored/unquantized and
 # quantization_config format=pack-quantized, quant_method=compressed-tensors,
-# weights num_bits=4, symmetric=true, group_size=128.
+# weights num_bits=4, symmetric=true, group_size=128. For current vLLM LFM2,
+# short-conv projections must remain unquantized/BF16 because the ShortConv
+# module is not constructed with quant_config and cannot load packed W4 tensors.
 #
 # BEFORE SUBMITTING: replace <DOCKERHUB_USER>/lfm-serving:w4a16-gptq with the
 # real pushed image tag.
@@ -27,7 +29,6 @@ services:
       - --host=0.0.0.0 #Don't change this to vllm-server
       - --port=8000 #Don't change this to vllm-server
       - --dtype=bfloat16
-      - --quantization=compressed-tensors
       - --linear-backend=machete
       - --max-model-len=5120
       - --gpu-memory-utilization=0.70

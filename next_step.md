@@ -1,18 +1,24 @@
 # 2-Day Execution Plan (v2) — LFM2.5-1.2B serving optimization
 
-> Status update, 2026-07-20: this plan is historical. The current decode-cost
-> work is documented in `EXPERIMENTS.md` Session 4/5. The actionable path is
-> now the constrained H200 campaign:
+> Status update, 2026-07-21: this plan is historical. Official H200 submissions
+> now show FP8 `fp8_per_tensor` as the best reliable path: ERS 59.78-60.89
+> across repeats, TBT median 4 ms, 4 failures, accuracy drop 0. Stock W4A16
+> compressed-tensors with both Marlin and Machete scored around 49 ERS with TBT
+> median 6 ms and is rejected for H200/MIG despite good RTX 3090 local latency.
 >
-> ```bash
-> TRACE=trace_grading_spec.jsonl WORKLOAD=spec W4_RUNS=3 DO_ACCURACY=1 \
->   bash scripts/run_decode_cost_campaign.sh
-> ```
+> Current action queue:
 >
-> Local CUDA 12.6 diagnostics are available via `configs/local_cu126_*.env`,
-> but they are smoke-only and not submission-equivalent. Do not resurrect
-> BitsAndBytes W4 or scheduler/cache sweeps from this old plan unless new
-> profiler evidence justifies them.
+> 1. Submit `submission/docker-compose.fp8-seqs16.yml` using existing
+>    `siconhoccode/lfm-serving:fp8`.
+> 2. Build/push `siconhoccode/lfm-serving:fp8-metadata-fastpath` with
+>    `submission/Dockerfile.fp8-metadata-fastpath-local`, then submit
+>    `submission/docker-compose.fp8-metadata-fastpath-seqs8.yml`.
+> 3. Submit `submission/docker-compose.fp8-metadata-fastpath-seqs16.yml` only if
+>    either axis improves official failures/ERS.
+>
+> Local CUDA diagnostics are smoke/correctness evidence only. Do not resurrect
+> BitsAndBytes W4, scheduler/cache sweeps, or stock W4 compressed-tensors unless
+> new H200 profiler evidence identifies a specific fixable bottleneck.
 
 Work order for the executing agent. Self-contained: read top-to-bottom before running
 anything. Supersedes v1 of this file. Prior findings live in `EXPERIMENTS.md` — read
