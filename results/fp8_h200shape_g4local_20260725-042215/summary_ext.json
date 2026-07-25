@@ -1,0 +1,19 @@
+{
+  "decode_tokens_per_s": 392.12065355074606,
+  "error_rate": 0.0,
+  "ers_mean": 0.8597912672823048,
+  "ers_mean_pct": 85.97912672823048,
+  "failed_requests": 0,
+  "latency_ms_mean": 922.1697304047525,
+  "latency_ms_p95": 651.5493320498763,
+  "n_errors": 0,
+  "n_requests": 420,
+  "successful_requests": 420,
+  "tpot_ms_mean": 1.8892399434704727,
+  "tpot_ms_p50": 1.8728409437443962,
+  "tpot_ms_p95": 2.094830583050834,
+  "ttft_ms_mean": 370.6486766500001,
+  "ttft_ms_p50": 24.11349050021272,
+  "ttft_ms_p95": 34.98928949982201,
+  "wall_time_s": 321.3296694755554
+}

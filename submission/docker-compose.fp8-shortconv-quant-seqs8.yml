@@ -1,0 +1,46 @@
+# Q1 probe: vLLM v0.25.1 + backported ShortConv quant_config fix
+# (PR #48917), same validated FP8 runtime flags as the current best official
+# submission (ERS 60.89, see SUBMISSION_RESULTS.md S5). Only two things
+# change vs. that baseline: the base image (v0.22.1 -> v0.25.1) and full
+# quantization coverage of the 10 ShortConv layers' in_proj/out_proj
+# (~168M params, previously silently BF16 under fp8_per_tensor).
+# max_num_seqs stays at 8 to isolate the patch's effect from any scheduler
+# change -- do not combine with a seqs/batchtok sweep until this alone is
+# validated (gate: VRAM peak down, TPOT down >= 8%, accuracy_drop small,
+# output coherent, no new failures).
+#
+# BEFORE SUBMITTING: replace <DOCKERHUB_USER>/lfm-serving:fp8-shortconv-quant
+# with the real pushed image tag.
+services:
+  model:
+    image: <DOCKERHUB_USER>/lfm-serving:fp8-shortconv-quant
+    entrypoint:
+      - python3 #Don't change this to vllm-server
+      - -m #Don't change this to vllm-server
+      - vllm.entrypoints.openai.api_server #Don't change this to vllm-server
+    command:
+      - --model=/model #Don't change this to vllm-server
+      - --served-model-name=LFM2.5-1.2B-Instruct #Don't change this to vllm-server
+      - --host=0.0.0.0 #Don't change this to vllm-server
+      - --port=8000 #Don't change this to vllm-server
+      - --dtype=bfloat16
+      - --quantization=fp8_per_tensor
+      - --max-model-len=5120
+      - --gpu-memory-utilization=0.70
+      - --tensor-parallel-size=1
+      - --max-num-seqs=8
+      - --max-num-batched-tokens=512
+      - --enable-prefix-caching
+      - --prefix-caching-hash-algo=xxhash
+      - --disable-log-stats
+      - --disable-uvicorn-access-log
+    ports:
+      - "8000:8000"
+    shm_size: "2g"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

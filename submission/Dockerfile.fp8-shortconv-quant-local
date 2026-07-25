@@ -1,0 +1,38 @@
+# FP8 submission image with full ShortConv quantization coverage.
+#
+# Backports vLLM PR #48917 (merged 2026-07-21, "Fix LFM2 ShortConv
+# Quantization Configuration") onto vLLM v0.25.1. Verified locally (against
+# both v0.22.1 and v0.25.1 source) that Lfm2ShortConvDecoderLayer builds
+# ShortConv() without quant_config, and ShortConv.__init__ doesn't even
+# accept it -- so ShortConv.in_proj/out_proj (10 layers, ~168M params,
+# ~14% of LFM2.5-1.2B) silently stay BF16 under --quantization=fp8_per_tensor
+# even though Lfm2MLP and attention right next to them ARE quantized.
+#
+# This candidate ISOLATES that fix alone (same runtime flags as the current
+# best official FP8 submission, ERS 60.89 -- see SUBMISSION_RESULTS.md) so
+# its effect can be measured independently before stacking anything else.
+#
+# Build context must be the repository root:
+#   docker build -f submission/Dockerfile.fp8-shortconv-quant-local -t <image>:<tag> .
+#
+# Before building, copy/sync the official BF16 checkpoint into:
+#   submission/model/
+#
+# Switched to v0.25.1 (was v0.22.1 for the current best submission) to stay
+# on a more recent base; the ShortConv bug was independently confirmed
+# present in both versions' source trees before picking this base.
+FROM vllm/vllm-openai:v0.25.1
+
+RUN pip install --no-cache-dir xxhash
+
+COPY patches/apply_vllm_shortconv_quant.py /tmp/apply_vllm_shortconv_quant.py
+RUN python3 /tmp/apply_vllm_shortconv_quant.py && rm /tmp/apply_vllm_shortconv_quant.py
+
+COPY submission/model /model
+
+ENV HF_HUB_OFFLINE=1 \
+    TRANSFORMERS_OFFLINE=1 \
+    VLLM_NO_USAGE_STATS=1 \
+    DO_NOT_TRACK=1
+
+EXPOSE 8000
