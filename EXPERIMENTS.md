@@ -2142,7 +2142,7 @@ Interpretation:
 Current prepared probes:
 
 - `submission/docker-compose.fp8-seqs16.yml`
-  - Uses existing `siconhoccode/lfm-serving:fp8`.
+  - Uses existing `siconhoccode/lfm-serving:fp8-v1`.
   - Same best FP8 config except `--max-num-seqs=16`.
   - Purpose: test whether the persistent 4 official FP8 failures are admission /
     queue / deadline failures.

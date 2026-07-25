@@ -19,7 +19,7 @@
 > 2. Submit `submission/docker-compose.fp8-shortconv-quant-retention-seqs8.yml`
 >    (Q2: Q1 + hybrid-prefix retention, PR #47782, already in v0.25.1) right after.
 > 3. Submit `submission/docker-compose.fp8-seqs16.yml` using existing
->    `siconhoccode/lfm-serving:fp8` -- demoted below Q1/Q2.
+>    `siconhoccode/lfm-serving:fp8-v1` -- demoted below Q1/Q2.
 > 4. Build/push `siconhoccode/lfm-serving:fp8-metadata-fastpath` with
 >    `submission/Dockerfile.fp8-metadata-fastpath-local`, then submit
 >    `submission/docker-compose.fp8-metadata-fastpath-seqs8.yml`.

@@ -26,11 +26,11 @@
 # quant framework) uses the same Marlin W8A16 kernel on Ampere but is fully
 # coherent. Do not "simplify" this back to plain `fp8`.
 #
-# BEFORE SUBMITTING: replace <DOCKERHUB_USER>/lfm-serving:fp8 with the real
-# pushed image tag.
+# Pushed as siconhoccode/lfm-serving:fp8-v1 (confirmed live on Docker Hub
+# 2026-07-25; this is the actual image behind the ERS 60.89 baseline).
 services:
   model:
-    image: <DOCKERHUB_USER>/lfm-serving:fp8
+    image: siconhoccode/lfm-serving:fp8-v1
     entrypoint:
       - python3 #Don't change this to vllm-server
       - -m #Don't change this to vllm-server

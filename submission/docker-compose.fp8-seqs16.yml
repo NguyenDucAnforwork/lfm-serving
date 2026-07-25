@@ -4,7 +4,7 @@
 # exists.
 services:
   model:
-    image: siconhoccode/lfm-serving:fp8
+    image: siconhoccode/lfm-serving:fp8-v1
     entrypoint:
       - python3
       - -m

@@ -16,6 +16,10 @@ docker push <DOCKERHUB_USER>/lfm-serving:safe-bf16
 docker push <DOCKERHUB_USER>/lfm-serving:fp8
 ```
 
+(Historical note: these were actually pushed as `siconhoccode/lfm-serving:safe-bf16-v1`
+and `siconhoccode/lfm-serving:fp8-v1` -- confirmed live on Docker Hub 2026-07-25.
+Every current compose file has been fixed to point at the `-v1` tags.)
+
 Both images are identical (same `Dockerfile`, same baked-in
 `submission/model/` weights) — the FP8 vs BF16 choice is made entirely by
 which `command:` flags the submitted compose file uses, so **you technically

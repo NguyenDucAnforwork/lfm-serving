@@ -33,7 +33,7 @@ replay results.
 ## Current best official configuration
 
 ```text
-Image:                    siconhoccode/lfm-serving:fp8
+Image:                    siconhoccode/lfm-serving:fp8-v1
 Quantization:             fp8_per_tensor
 max_model_len:            5120
 max_num_seqs:             8
@@ -137,7 +137,7 @@ Submit in this order:
    Submit right after Q1, same grading session if the portal allows, so both
    real H200 data points land together.
 3. `submission/docker-compose.fp8-seqs16.yml`
-   - Image: `siconhoccode/lfm-serving:fp8`
+   - Image: `siconhoccode/lfm-serving:fp8-v1`
    - Same validated FP8 config, only `max_num_seqs=8 -> 16`
    - Goal: test whether official 4 failures are queue/deadline starvation.
    - Demote below Q1/Q2 -- if the ShortConv fix changes the decode-cost
@@ -156,12 +156,25 @@ Submit in this order:
 
 ## Related image/config inventory
 
+Verified live against the Docker Hub API (2026-07-25, public repo, no auth
+needed: `curl https://hub.docker.com/v2/repositories/siconhoccode/lfm-serving/tags`)
+-- table below reflects actual pushed tags, not assumed ones. This caught a
+real bug: every compose file previously pointed at a bare `:fp8` tag that
+was never actually pushed (only `:fp8-v1` exists) -- fixed in
+`docker-compose.fp8.yml` and `docker-compose.fp8-seqs16.yml`.
+
 | Image | Status | Configs |
 |---|---|---|
-| `siconhoccode/lfm-serving:fp8` | Already pushed; current best official image | `docker-compose.fp8.yml`, `docker-compose.fp8-seqs16.yml` |
-| `siconhoccode/lfm-serving:w4a16-g64-mlp10-15-bf16` | Already pushed; official rejected | W4 MLP10-15 Marlin/Machete |
-| `siconhoccode/lfm-serving:fp8-metadata-fastpath` | Needs local build/push | `docker-compose.fp8-metadata-fastpath-seqs8.yml`, `docker-compose.fp8-metadata-fastpath-seqs16.yml` |
-| `siconhoccode/lfm-serving:w4a16-g64-mlp10-15-attn10-12-14-bf16` | Needs local build/push | `docker-compose.w4a16-g64-mlp10-15-attn10-12-14-bf16.machete.yml` |
+| `siconhoccode/lfm-serving:fp8-v1` | Pushed; current best official image (ERS 60.89) | `docker-compose.fp8.yml`, `docker-compose.fp8-seqs16.yml` |
+| `siconhoccode/lfm-serving:fp8-shortconv-quant` | Pushed; **official ERS 51.65, WORSE than baseline** -- see "New candidates" above | `docker-compose.fp8-shortconv-quant-seqs8.yml` |
+| `siconhoccode/lfm-serving:fp8-shortconv-quant-v0221` | Pushed 2026-07-25, awaiting official result (isolates ShortConv fix from the v0.25.1 base swap) | `docker-compose.fp8-shortconv-quant-v0221-seqs8.yml` |
+| `siconhoccode/lfm-serving:fp8-shortconv-quant-retention` | Pushed 2026-07-25, not yet submitted (blocked pending Q1 diagnosis) | `docker-compose.fp8-shortconv-quant-retention-seqs8.yml` |
+| `siconhoccode/lfm-serving:fp8-v0251` | Pushed 2026-07-21 -- plain v0.25.1 base, no ShortConv patch; not referenced by any current compose file, origin/purpose unclear, do not assume it's safe to reuse without checking what it actually contains |
+| `siconhoccode/lfm-serving:w4a16-g64-mlp10-15-bf16` | Pushed; official rejected | W4 MLP10-15 Marlin/Machete |
+| `siconhoccode/lfm-serving:w4a16-g64-mlp10-15-attn10-12-14-bf16` | Pushed; official rejected | `docker-compose.w4a16-g64-mlp10-15-attn10-12-14-bf16.{marlin,machete}.yml` |
+| `siconhoccode/lfm-serving:safe-bf16-v1` | Pushed | not currently referenced by `docker-compose.safe-bf16.yml` (that file still has the `<DOCKERHUB_USER>` placeholder -- fix before submitting) |
+| `siconhoccode/lfm-serving:fp8-metadata-fastpath` | **Not pushed** -- needs local build | `docker-compose.fp8-metadata-fastpath-seqs8.yml`, `docker-compose.fp8-metadata-fastpath-seqs16.yml` |
+| `siconhoccode/lfm-serving:w4a16-gptq`, `w4a16-g64-late-mlp-bf16` | **Not pushed** -- guarded/unvalidated candidates, do not build until their gates pass | `docker-compose.w4a16-gptq.yml`, `docker-compose.w4a16-g64-late-mlp-bf16.local.yml` |
 
 ## Accuracy notes
 

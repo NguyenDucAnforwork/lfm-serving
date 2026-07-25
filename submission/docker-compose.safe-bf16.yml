@@ -9,11 +9,11 @@
 # behind max_model_len/gpu_memory_utilization/max_num_seqs/max_num_batched_tokens
 # -- these are REASONED BUT UNTESTED on real H200 hardware).
 #
-# BEFORE SUBMITTING: replace <DOCKERHUB_USER>/lfm-serving:safe-bf16 with the
-# real pushed image tag.
+# Pushed as siconhoccode/lfm-serving:safe-bf16-v1 (confirmed live on Docker
+# Hub 2026-07-25, following the same -v1 naming convention as fp8-v1).
 services:
   model:
-    image: <DOCKERHUB_USER>/lfm-serving:safe-bf16
+    image: siconhoccode/lfm-serving:safe-bf16-v1
     entrypoint:
       - python3 #Don't change this to vllm-server
       - -m #Don't change this to vllm-server
