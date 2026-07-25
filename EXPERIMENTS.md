@@ -660,16 +660,48 @@ presumably validated against pure-transformer architectures, not this hybrid one
 GPU recovered cleanly after both crashes (`nvidia-smi` showed 0 processes, no
 lingering corruption) -- contained failures, not a host-level issue.
 
-**`ngram_gpu` and `suffix` were not attempted** -- both share the same core
-draft/verify/rollback machinery in vLLM's V1 engine as `ngram`, so the same
+**`ngram_gpu` and `suffix` were not attempted [at the time]** -- both share the same
+core draft/verify/rollback machinery in vLLM's V1 engine as `ngram`, so the same
 architectural incompatibility is highly likely to reproduce. Given the severity (hard
 crash, not a graceful degradation) and that this was confirmed via two independent
 tests (fp8 and BF16), further spec-decode methods were deprioritized in favor of
 buffer time for stability repeats and write-up.
 
-**Verdict: T6 fully REJECTED for this model.** Do not enable any `--spec-method` in
-any submission candidate. This also means the trace's 83%-idle-GPU time (avg
-concurrency 1.17, see "Benchmark assumptions") cannot be recovered via speculative
+**UPDATE 2026-07-25: `suffix` decoding tested and CONFIRMS the hypothesis.** Ran
+`--speculative-config '{"method":"suffix","num_speculative_tokens":4,"suffix_decoding_max_tree_depth":24,"suffix_decoding_max_cached_requests":10000,"suffix_decoding_min_token_prob":0.1}'`
+(requires `pip install arctic-inference==0.1.1`) on top of `fp8_per_tensor`, same
+config as the rest of this session (`trace_grading_spec_v2.jsonl`, seqs=8,
+batchtok=512). Server started cleanly, single-request smoke test would very likely
+have looked fine (same false-negative pattern as the original ngram test) -- **but
+under the full 420-request trace's real concurrent load, the EngineCore crashed 24
+seconds in**: 417/420 requests (99.3%) failed. Crash signature this time is different
+from ngram's `illegal memory access` --
+`AssertionError: num_required_blocks 142 < len(req_blocks) 143` in
+`vllm/v1/core/single_type_kv_cache_manager.py:allocate_new_blocks` -- a KV-block
+accounting mismatch where the scheduler computes fewer blocks as needed than the
+request already holds. Different specific bug, same practical outcome (near-total
+failure), and consistent with the standing hypothesis: LFM2's hybrid Mamba/ShortConv
+cache-state management (particularly the experimental `align` prefix-cache mode for
+Mamba layers, which logs its own "experimental" warning at startup) does not
+correctly handle the block/slot accounting that ANY speculative-decoding method's
+accept/reject rollback requires, regardless of which drafting technique is used.
+
+**This closes the entire speculative-decoding direction for this model, not just
+ngram.** In particular, this means training a custom MLP-speculator or EAGLE head
+for LFM2.5-1.2B (a much larger investment than testing an existing method) is very
+likely to hit the same crash once verification/rollback is exercised under real
+concurrency -- the failure is in vLLM's hybrid-architecture KV-block/cache-state
+management, not in the specific drafting algorithm. Do not invest in training a
+speculator without first getting a specific, credible signal that this rollback path
+has been fixed upstream (e.g. a vLLM changelog entry) -- untested here, this dev box
+has no way to verify a fix even if one existed, since it would need the same kind of
+full-concurrent-load trace test that caught this.
+
+**Verdict: T6 remains fully REJECTED for this model, now confirmed for two
+independent methods (ngram, suffix).** Do not enable any `--spec-method` in any
+submission candidate, and do not spend time training a custom speculator. This also
+means the trace's 83%-idle-GPU time (avg concurrency 1.17, see "Benchmark
+assumptions") cannot be recovered via speculative
 decoding for this specific model/architecture combination in vLLM 0.22.1.
 
 ### Buffer exploration: does FP8 shift the batchtok optimum on this GPU?

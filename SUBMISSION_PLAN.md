@@ -331,7 +331,12 @@ small vCPU allocation on the MIG slice.
 - Do not treat local CUDA 12.6 / vLLM 0.10.0 diagnostics as official evidence.
   They are useful for smoke tests only; final candidates require the H200/CUDA
   13 submission stack.
-- Do not enable any `--spec-method` — hard CUDA crash under load, verified.
+- Do not enable any `--spec-method` (ngram, suffix -- both independently verified
+  to crash under real concurrent load, different crash signatures, same root
+  cause: LFM2's hybrid Mamba/ShortConv KV-block accounting doesn't survive
+  spec-decode's accept/reject rollback) — do not train a custom speculator
+  (MLP/EAGLE) either, same underlying rollback machinery. See EXPERIMENTS.md
+  "T6" for both crash traces.
 - Do not use `--quantization=bitsandbytes` — measured worse than baseline.
 - Do not set `--max-num-partial-prefills` > 1 — vLLM refuses to start.
 - Do not set `--block-size` above the default (16) — measured worse.

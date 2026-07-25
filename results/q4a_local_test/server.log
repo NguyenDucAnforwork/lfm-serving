@@ -1,0 +1,256 @@
+(APIServer pid=105473) INFO 07-25 08:07:25 [utils.py:344] 
+(APIServer pid=105473) INFO 07-25 08:07:25 [utils.py:344]        █     █     █▄   ▄█
+(APIServer pid=105473) INFO 07-25 08:07:25 [utils.py:344]  ▄▄ ▄█ █     █     █ ▀▄▀ █  version 0.22.1
+(APIServer pid=105473) INFO 07-25 08:07:25 [utils.py:344]   █▄█▀ █     █     █     █  model   /content/lfm-serving/artifacts/lfm2-w4afp8-mlp0-9-fp8-rest
+(APIServer pid=105473) INFO 07-25 08:07:25 [utils.py:344]    ▀▀  ▀▀▀▀▀ ▀▀▀▀▀ ▀     ▀
+(APIServer pid=105473) INFO 07-25 08:07:25 [utils.py:344] 
+(APIServer pid=105473) INFO 07-25 08:07:25 [utils.py:278] non-default args: {'host': '127.0.0.1', 'disable_uvicorn_access_log': True, 'model': '/content/lfm-serving/artifacts/lfm2-w4afp8-mlp0-9-fp8-rest', 'dtype': 'bfloat16', 'max_model_len': 5120, 'served_model_name': ['LFM2.5-1.2B-Instruct'], 'gpu_memory_utilization': 0.22, 'enable_prefix_caching': True, 'prefix_caching_hash_algo': 'xxhash', 'max_num_batched_tokens': 512, 'max_num_seqs': 8, 'disable_log_stats': True}
+(APIServer pid=105473) INFO 07-25 08:07:30 [model.py:617] Resolved architecture: Lfm2ForCausalLM
+(APIServer pid=105473) INFO 07-25 08:07:30 [model.py:1752] Using max model len 5120
+(APIServer pid=105473) INFO 07-25 08:07:31 [scheduler.py:239] Chunked prefill is enabled with max_num_batched_tokens=512.
+(APIServer pid=105473) WARNING 07-25 08:07:31 [config.py:355] Mamba cache mode is set to 'align' for Lfm2ForCausalLM by default when prefix caching is enabled
+(APIServer pid=105473) INFO 07-25 08:07:31 [config.py:375] Warning: Prefix caching in Mamba cache 'align' mode is currently enabled. Its support for Mamba layers is experimental. Please report any issues you may observe.
+(APIServer pid=105473) INFO 07-25 08:07:31 [vllm.py:977] Asynchronous scheduling is enabled.
+(APIServer pid=105473) INFO 07-25 08:07:31 [kernel.py:270] Final IR op priority after setting platform defaults: IrOpPriorityConfig(rms_norm=['native'], fused_add_rms_norm=['native'])
+(EngineCore pid=105903) INFO 07-25 08:07:36 [core.py:112] Initializing a V1 LLM engine (v0.22.1) with config: model='/content/lfm-serving/artifacts/lfm2-w4afp8-mlp0-9-fp8-rest', speculative_config=None, tokenizer='/content/lfm-serving/artifacts/lfm2-w4afp8-mlp0-9-fp8-rest', skip_tokenizer_init=False, tokenizer_mode=auto, revision=None, tokenizer_revision=None, trust_remote_code=False, dtype=torch.bfloat16, max_seq_len=5120, download_dir=None, load_format=auto, tensor_parallel_size=1, pipeline_parallel_size=1, data_parallel_size=1, decode_context_parallel_size=1, dcp_comm_backend=ag_rs, disable_custom_all_reduce=False, quantization=compressed-tensors, quantization_config=None, enforce_eager=False, enable_return_routed_experts=False, kv_cache_dtype=auto, device_config=cuda, structured_outputs_config=StructuredOutputsConfig(backend='auto', disable_any_whitespace=False, disable_additional_properties=False, reasoning_parser='', reasoning_parser_plugin='', enable_in_reasoning=False), observability_config=ObservabilityConfig(show_hidden_metrics_for_version=None, otlp_traces_endpoint=None, collect_detailed_traces=None, kv_cache_metrics=False, kv_cache_metrics_sample=0.01, cudagraph_metrics=False, enable_layerwise_nvtx_tracing=False, enable_mfu_metrics=False, enable_mm_processor_stats=False, enable_logging_iteration_details=False), seed=0, served_model_name=LFM2.5-1.2B-Instruct, enable_prefix_caching=True, enable_chunked_prefill=True, pooler_config=None, compilation_config={'mode': <CompilationMode.VLLM_COMPILE: 3>, 'debug_dump_path': None, 'cache_dir': '', 'compile_cache_save_format': 'binary', 'backend': 'inductor', 'custom_ops': ['none'], 'ir_enable_torch_wrap': True, 'splitting_ops': ['vllm::unified_attention_with_output', 'vllm::unified_mla_attention_with_output', 'vllm::mamba_mixer2', 'vllm::mamba_mixer', 'vllm::short_conv', 'vllm::linear_attention', 'vllm::plamo2_mamba_mixer', 'vllm::qwen_gdn_attention_core', 'vllm::gdn_attention_core_xpu', 'vllm::olmo_hybrid_gdn_full_forward', 'vllm::kda_attention', 'vllm::sparse_attn_indexer', 'vllm::rocm_aiter_sparse_attn_indexer', 'vllm::deepseek_v4_attention', 'vllm::unified_kv_cache_update', 'vllm::unified_mla_kv_cache_update'], 'compile_mm_encoder': False, 'cudagraph_mm_encoder': False, 'encoder_cudagraph_token_budgets': [], 'encoder_cudagraph_max_vision_items_per_batch': 0, 'encoder_cudagraph_max_frames_per_batch': None, 'compile_sizes': [], 'compile_ranges_endpoints': [512], 'inductor_compile_config': {'enable_auto_functionalized_v2': False, 'size_asserts': False, 'alignment_asserts': False, 'scalar_asserts': False, 'combo_kernels': True, 'benchmark_combo_kernel': True}, 'inductor_passes': {}, 'cudagraph_mode': <CUDAGraphMode.FULL_AND_PIECEWISE: (2, 1)>, 'cudagraph_num_of_warmups': 1, 'cudagraph_capture_sizes': [1, 2, 4, 8, 16], 'cudagraph_copy_inputs': False, 'cudagraph_specialize_lora': True, 'use_inductor_graph_partition': False, 'pass_config': {'fuse_norm_quant': False, 'fuse_act_quant': False, 'fuse_attn_quant': False, 'enable_sp': False, 'fuse_gemm_comms': False, 'fuse_allreduce_rms': False, 'fuse_rope_kvcache_cat_mla': False, 'fuse_act_padding': False}, 'max_cudagraph_capture_size': 16, 'dynamic_shapes_config': {'type': <DynamicShapesType.BACKED: 'backed'>, 'evaluate_guards': False, 'assume_32_bit_indexing': False}, 'local_cache_dir': None, 'fast_moe_cold_start': False, 'static_all_moe_layers': []}, kernel_config=KernelConfig(ir_op_priority=IrOpPriorityConfig(rms_norm=['native'], fused_add_rms_norm=['native']), enable_flashinfer_autotune=True, moe_backend='auto', linear_backend='auto')
+(EngineCore pid=105903) INFO 07-25 08:07:36 [parallel_state.py:1422] world_size=1 rank=0 local_rank=0 distributed_init_method=tcp://172.28.0.12:40491 backend=nccl
+(EngineCore pid=105903) INFO 07-25 08:07:36 [parallel_state.py:1735] rank 0 in world size 1 is assigned as DP rank 0, PP rank 0, PCP rank 0, TP rank 0, EP rank N/A, EPLB rank N/A
+(EngineCore pid=105903) INFO 07-25 08:07:36 [topk_topp_sampler.py:70] FlashInfer top-p/top-k sampling disabled via VLLM_USE_FLASHINFER_SAMPLER=0; using PyTorch-native sampler.
+(EngineCore pid=105903) INFO 07-25 08:07:36 [gpu_model_runner.py:5037] Starting to load model /content/lfm-serving/artifacts/lfm2-w4afp8-mlp0-9-fp8-rest...
+(EngineCore pid=105903) ERROR 07-25 08:07:37 [core.py:1165] EngineCore failed to start.
+(EngineCore pid=105903) ERROR 07-25 08:07:37 [core.py:1165] Traceback (most recent call last):
+(EngineCore pid=105903) ERROR 07-25 08:07:37 [core.py:1165]   File "/content/lfm-serving/.venv/lib/python3.12/site-packages/vllm/v1/engine/core.py", line 1139, in run_engine_core
+(EngineCore pid=105903) ERROR 07-25 08:07:37 [core.py:1165]     engine_core = EngineCoreProc(*args, engine_index=dp_rank, **kwargs)
+(EngineCore pid=105903) ERROR 07-25 08:07:37 [core.py:1165]                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=105903) ERROR 07-25 08:07:37 [core.py:1165]   File "/content/lfm-serving/.venv/lib/python3.12/site-packages/vllm/tracing/otel.py", line 178, in sync_wrapper
+(EngineCore pid=105903) ERROR 07-25 08:07:37 [core.py:1165]     return func(*args, **kwargs)
+(EngineCore pid=105903) ERROR 07-25 08:07:37 [core.py:1165]            ^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=105903) ERROR 07-25 08:07:37 [core.py:1165]   File "/content/lfm-serving/.venv/lib/python3.12/site-packages/vllm/v1/engine/core.py", line 905, in __init__
+(EngineCore pid=105903) ERROR 07-25 08:07:37 [core.py:1165]     super().__init__(
+(EngineCore pid=105903) ERROR 07-25 08:07:37 [core.py:1165]   File "/content/lfm-serving/.venv/lib/python3.12/site-packages/vllm/v1/engine/core.py", line 121, in __init__
+(EngineCore pid=105903) ERROR 07-25 08:07:37 [core.py:1165]     self.model_executor = executor_class(vllm_config)
+(EngineCore pid=105903) ERROR 07-25 08:07:37 [core.py:1165]                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=105903) ERROR 07-25 08:07:37 [core.py:1165]   File "/content/lfm-serving/.venv/lib/python3.12/site-packages/vllm/tracing/otel.py", line 178, in sync_wrapper
+(EngineCore pid=105903) ERROR 07-25 08:07:37 [core.py:1165]     return func(*args, **kwargs)
+(EngineCore pid=105903) ERROR 07-25 08:07:37 [core.py:1165]            ^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=105903) ERROR 07-25 08:07:37 [core.py:1165]   File "/content/lfm-serving/.venv/lib/python3.12/site-packages/vllm/v1/executor/abstract.py", line 109, in __init__
+(EngineCore pid=105903) ERROR 07-25 08:07:37 [core.py:1165]     self._init_executor()
+(EngineCore pid=105903) ERROR 07-25 08:07:37 [core.py:1165]   File "/content/lfm-serving/.venv/lib/python3.12/site-packages/vllm/v1/executor/uniproc_executor.py", line 65, in _init_executor
+(EngineCore pid=105903) ERROR 07-25 08:07:37 [core.py:1165]     self.driver_worker.load_model()
+(EngineCore pid=105903) ERROR 07-25 08:07:37 [core.py:1165]   File "/content/lfm-serving/.venv/lib/python3.12/site-packages/vllm/v1/worker/gpu_worker.py", line 342, in load_model
+(EngineCore pid=105903) ERROR 07-25 08:07:37 [core.py:1165]     self.model_runner.load_model(load_dummy_weights=load_dummy_weights)
+(EngineCore pid=105903) ERROR 07-25 08:07:37 [core.py:1165]   File "/content/lfm-serving/.venv/lib/python3.12/site-packages/vllm/tracing/otel.py", line 178, in sync_wrapper
+(EngineCore pid=105903) ERROR 07-25 08:07:37 [core.py:1165]     return func(*args, **kwargs)
+(EngineCore pid=105903) ERROR 07-25 08:07:37 [core.py:1165]            ^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=105903) ERROR 07-25 08:07:37 [core.py:1165]   File "/content/lfm-serving/.venv/lib/python3.12/site-packages/vllm/v1/worker/gpu_model_runner.py", line 5053, in load_model
+(EngineCore pid=105903) ERROR 07-25 08:07:37 [core.py:1165]     self.model = model_loader.load_model(
+(EngineCore pid=105903) ERROR 07-25 08:07:37 [core.py:1165]                  ^^^^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=105903) ERROR 07-25 08:07:37 [core.py:1165]   File "/content/lfm-serving/.venv/lib/python3.12/site-packages/vllm/tracing/otel.py", line 178, in sync_wrapper
+(EngineCore pid=105903) ERROR 07-25 08:07:37 [core.py:1165]     return func(*args, **kwargs)
+(EngineCore pid=105903) ERROR 07-25 08:07:37 [core.py:1165]            ^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=105903) ERROR 07-25 08:07:37 [core.py:1165]   File "/content/lfm-serving/.venv/lib/python3.12/site-packages/vllm/model_executor/model_loader/base_loader.py", line 55, in load_model
+(EngineCore pid=105903) ERROR 07-25 08:07:37 [core.py:1165]     model = initialize_model(
+(EngineCore pid=105903) ERROR 07-25 08:07:37 [core.py:1165]             ^^^^^^^^^^^^^^^^^
+(EngineCore pid=105903) ERROR 07-25 08:07:37 [core.py:1165]   File "/content/lfm-serving/.venv/lib/python3.12/site-packages/vllm/tracing/otel.py", line 178, in sync_wrapper
+(EngineCore pid=105903) ERROR 07-25 08:07:37 [core.py:1165]     return func(*args, **kwargs)
+(EngineCore pid=105903) ERROR 07-25 08:07:37 [core.py:1165]            ^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=105903) ERROR 07-25 08:07:37 [core.py:1165]   File "/content/lfm-serving/.venv/lib/python3.12/site-packages/vllm/model_executor/model_loader/utils.py", line 61, in initialize_model
+(EngineCore pid=105903) ERROR 07-25 08:07:37 [core.py:1165]     model = model_class(vllm_config=vllm_config, prefix=prefix)
+(EngineCore pid=105903) ERROR 07-25 08:07:37 [core.py:1165]             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=105903) ERROR 07-25 08:07:37 [core.py:1165]   File "/content/lfm-serving/.venv/lib/python3.12/site-packages/vllm/model_executor/models/lfm2.py", line 493, in __init__
+(EngineCore pid=105903) ERROR 07-25 08:07:37 [core.py:1165]     self.model = Lfm2Model(
+(EngineCore pid=105903) ERROR 07-25 08:07:37 [core.py:1165]                  ^^^^^^^^^^
+(EngineCore pid=105903) ERROR 07-25 08:07:37 [core.py:1165]   File "/content/lfm-serving/.venv/lib/python3.12/site-packages/vllm/compilation/decorators.py", line 383, in __init__
+(EngineCore pid=105903) ERROR 07-25 08:07:37 [core.py:1165]     old_init(self, *args, **kwargs)
+(EngineCore pid=105903) ERROR 07-25 08:07:37 [core.py:1165]   File "/content/lfm-serving/.venv/lib/python3.12/site-packages/vllm/model_executor/models/lfm2.py", line 332, in __init__
+(EngineCore pid=105903) ERROR 07-25 08:07:37 [core.py:1165]     self.start_layer, self.end_layer, self.layers = make_layers(
+(EngineCore pid=105903) ERROR 07-25 08:07:37 [core.py:1165]                                                     ^^^^^^^^^^^^
+(EngineCore pid=105903) ERROR 07-25 08:07:37 [core.py:1165]   File "/content/lfm-serving/.venv/lib/python3.12/site-packages/vllm/model_executor/models/utils.py", line 643, in make_layers
+(EngineCore pid=105903) ERROR 07-25 08:07:37 [core.py:1165]     + get_offloader().wrap_modules(
+(EngineCore pid=105903) ERROR 07-25 08:07:37 [core.py:1165]       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=105903) ERROR 07-25 08:07:37 [core.py:1165]   File "/content/lfm-serving/.venv/lib/python3.12/site-packages/vllm/model_executor/offloader/base.py", line 104, in wrap_modules
+(EngineCore pid=105903) ERROR 07-25 08:07:37 [core.py:1165]     return list(modules_generator)
+(EngineCore pid=105903) ERROR 07-25 08:07:37 [core.py:1165]            ^^^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=105903) ERROR 07-25 08:07:37 [core.py:1165]   File "/content/lfm-serving/.venv/lib/python3.12/site-packages/vllm/model_executor/models/utils.py", line 644, in <genexpr>
+(EngineCore pid=105903) ERROR 07-25 08:07:37 [core.py:1165]     layer_fn(prefix=f"{prefix}.{idx}") for idx in range(start_layer, end_layer)
+(EngineCore pid=105903) ERROR 07-25 08:07:37 [core.py:1165]     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=105903) ERROR 07-25 08:07:37 [core.py:1165]   File "/content/lfm-serving/.venv/lib/python3.12/site-packages/vllm/model_executor/models/lfm2.py", line 323, in get_layer
+(EngineCore pid=105903) ERROR 07-25 08:07:37 [core.py:1165]     return layer_class(
+(EngineCore pid=105903) ERROR 07-25 08:07:37 [core.py:1165]            ^^^^^^^^^^^^
+(EngineCore pid=105903) ERROR 07-25 08:07:37 [core.py:1165]   File "/content/lfm-serving/.venv/lib/python3.12/site-packages/vllm/model_executor/models/lfm2.py", line 266, in __init__
+(EngineCore pid=105903) ERROR 07-25 08:07:37 [core.py:1165]     self.feed_forward = Lfm2MLP(
+(EngineCore pid=105903) ERROR 07-25 08:07:37 [core.py:1165]                         ^^^^^^^^
+(EngineCore pid=105903) ERROR 07-25 08:07:37 [core.py:1165]   File "/content/lfm-serving/.venv/lib/python3.12/site-packages/vllm/model_executor/models/lfm2.py", line 72, in __init__
+(EngineCore pid=105903) ERROR 07-25 08:07:37 [core.py:1165]     self.w13 = MergedColumnParallelLinear(
+(EngineCore pid=105903) ERROR 07-25 08:07:37 [core.py:1165]                ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=105903) ERROR 07-25 08:07:37 [core.py:1165]   File "/content/lfm-serving/.venv/lib/python3.12/site-packages/vllm/model_executor/layers/linear.py", line 652, in __init__
+(EngineCore pid=105903) ERROR 07-25 08:07:37 [core.py:1165]     super().__init__(
+(EngineCore pid=105903) ERROR 07-25 08:07:37 [core.py:1165]   File "/content/lfm-serving/.venv/lib/python3.12/site-packages/vllm/model_executor/layers/linear.py", line 477, in __init__
+(EngineCore pid=105903) ERROR 07-25 08:07:37 [core.py:1165]     self.quant_method.create_weights(
+(EngineCore pid=105903) ERROR 07-25 08:07:37 [core.py:1165]   File "/content/lfm-serving/.venv/lib/python3.12/site-packages/vllm/model_executor/layers/quantization/compressed_tensors/compressed_tensors.py", line 826, in create_weights
+(EngineCore pid=105903) ERROR 07-25 08:07:37 [core.py:1165]     layer.scheme.create_weights(
+(EngineCore pid=105903) ERROR 07-25 08:07:37 [core.py:1165]   File "/content/lfm-serving/.venv/lib/python3.12/site-packages/vllm/model_executor/layers/quantization/compressed_tensors/schemes/compressed_tensors_w4a8_int.py", line 105, in create_weights
+(EngineCore pid=105903) ERROR 07-25 08:07:37 [core.py:1165]     kernel_type = choose_mp_linear_kernel(mp_linear_kernel_config)
+(EngineCore pid=105903) ERROR 07-25 08:07:37 [core.py:1165]                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=105903) ERROR 07-25 08:07:37 [core.py:1165]   File "/content/lfm-serving/.venv/lib/python3.12/site-packages/vllm/model_executor/kernels/linear/__init__.py", line 685, in choose_mp_linear_kernel
+(EngineCore pid=105903) ERROR 07-25 08:07:37 [core.py:1165]     raise ValueError(
+(EngineCore pid=105903) ERROR 07-25 08:07:37 [core.py:1165] ValueError: Failed to find a kernel that can implement the WNA16 linear layer. Reasons: 
+(EngineCore pid=105903) ERROR 07-25 08:07:37 [core.py:1165]  CutlassW4A8LinearKernel cannot implement due to: CUTLASS W4A8 requires compute capability of 90 (Hopper)
+(EngineCore pid=105903) ERROR 07-25 08:07:37 [core.py:1165]  MacheteLinearKernel cannot implement due to: Machete requires compute capability of 90 (Hopper)
+(EngineCore pid=105903) ERROR 07-25 08:07:37 [core.py:1165]  AllSparkLinearKernel cannot implement due to: AllSpark currently does not support device_capability = 120.
+(EngineCore pid=105903) ERROR 07-25 08:07:37 [core.py:1165]  MarlinLinearKernel cannot implement due to: Quant type (int4) not supported by  Marlin, supported types are: [ScalarType.uint4b8, ScalarType.uint8b128, ScalarType.float8_e4m3fn, ScalarType.float4_e2m1f]
+(EngineCore pid=105903) ERROR 07-25 08:07:37 [core.py:1165]  ConchLinearKernel cannot implement due to: Weight type (int4) not supported by ConchLinearKernel, supported types are: [ScalarType.uint4, ScalarType.uint8, ScalarType.uint4b8, ScalarType.uint8b128]
+(EngineCore pid=105903) ERROR 07-25 08:07:37 [core.py:1165]  ExllamaLinearKernel cannot implement due to: Exllama only supports float16 activations
+(EngineCore pid=105903) Process EngineCore:
+(EngineCore pid=105903) Traceback (most recent call last):
+(EngineCore pid=105903)   File "/usr/lib/python3.12/multiprocessing/process.py", line 314, in _bootstrap
+(EngineCore pid=105903)     self.run()
+(EngineCore pid=105903)   File "/usr/lib/python3.12/multiprocessing/process.py", line 108, in run
+(EngineCore pid=105903)     self._target(*self._args, **self._kwargs)
+(EngineCore pid=105903)   File "/content/lfm-serving/.venv/lib/python3.12/site-packages/vllm/v1/engine/core.py", line 1169, in run_engine_core
+(EngineCore pid=105903)     raise e
+(EngineCore pid=105903)   File "/content/lfm-serving/.venv/lib/python3.12/site-packages/vllm/v1/engine/core.py", line 1139, in run_engine_core
+(EngineCore pid=105903)     engine_core = EngineCoreProc(*args, engine_index=dp_rank, **kwargs)
+(EngineCore pid=105903)                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=105903)   File "/content/lfm-serving/.venv/lib/python3.12/site-packages/vllm/tracing/otel.py", line 178, in sync_wrapper
+(EngineCore pid=105903)     return func(*args, **kwargs)
+(EngineCore pid=105903)            ^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=105903)   File "/content/lfm-serving/.venv/lib/python3.12/site-packages/vllm/v1/engine/core.py", line 905, in __init__
+(EngineCore pid=105903)     super().__init__(
+(EngineCore pid=105903)   File "/content/lfm-serving/.venv/lib/python3.12/site-packages/vllm/v1/engine/core.py", line 121, in __init__
+(EngineCore pid=105903)     self.model_executor = executor_class(vllm_config)
+(EngineCore pid=105903)                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=105903)   File "/content/lfm-serving/.venv/lib/python3.12/site-packages/vllm/tracing/otel.py", line 178, in sync_wrapper
+(EngineCore pid=105903)     return func(*args, **kwargs)
+(EngineCore pid=105903)            ^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=105903)   File "/content/lfm-serving/.venv/lib/python3.12/site-packages/vllm/v1/executor/abstract.py", line 109, in __init__
+(EngineCore pid=105903)     self._init_executor()
+(EngineCore pid=105903)   File "/content/lfm-serving/.venv/lib/python3.12/site-packages/vllm/v1/executor/uniproc_executor.py", line 65, in _init_executor
+(EngineCore pid=105903)     self.driver_worker.load_model()
+(EngineCore pid=105903)   File "/content/lfm-serving/.venv/lib/python3.12/site-packages/vllm/v1/worker/gpu_worker.py", line 342, in load_model
+(EngineCore pid=105903)     self.model_runner.load_model(load_dummy_weights=load_dummy_weights)
+(EngineCore pid=105903)   File "/content/lfm-serving/.venv/lib/python3.12/site-packages/vllm/tracing/otel.py", line 178, in sync_wrapper
+(EngineCore pid=105903)     return func(*args, **kwargs)
+(EngineCore pid=105903)            ^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=105903)   File "/content/lfm-serving/.venv/lib/python3.12/site-packages/vllm/v1/worker/gpu_model_runner.py", line 5053, in load_model
+(EngineCore pid=105903)     self.model = model_loader.load_model(
+(EngineCore pid=105903)                  ^^^^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=105903)   File "/content/lfm-serving/.venv/lib/python3.12/site-packages/vllm/tracing/otel.py", line 178, in sync_wrapper
+(EngineCore pid=105903)     return func(*args, **kwargs)
+(EngineCore pid=105903)            ^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=105903)   File "/content/lfm-serving/.venv/lib/python3.12/site-packages/vllm/model_executor/model_loader/base_loader.py", line 55, in load_model
+(EngineCore pid=105903)     model = initialize_model(
+(EngineCore pid=105903)             ^^^^^^^^^^^^^^^^^
+(EngineCore pid=105903)   File "/content/lfm-serving/.venv/lib/python3.12/site-packages/vllm/tracing/otel.py", line 178, in sync_wrapper
+(EngineCore pid=105903)     return func(*args, **kwargs)
+(EngineCore pid=105903)            ^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=105903)   File "/content/lfm-serving/.venv/lib/python3.12/site-packages/vllm/model_executor/model_loader/utils.py", line 61, in initialize_model
+(EngineCore pid=105903)     model = model_class(vllm_config=vllm_config, prefix=prefix)
+(EngineCore pid=105903)             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=105903)   File "/content/lfm-serving/.venv/lib/python3.12/site-packages/vllm/model_executor/models/lfm2.py", line 493, in __init__
+(EngineCore pid=105903)     self.model = Lfm2Model(
+(EngineCore pid=105903)                  ^^^^^^^^^^
+(EngineCore pid=105903)   File "/content/lfm-serving/.venv/lib/python3.12/site-packages/vllm/compilation/decorators.py", line 383, in __init__
+(EngineCore pid=105903)     old_init(self, *args, **kwargs)
+(EngineCore pid=105903)   File "/content/lfm-serving/.venv/lib/python3.12/site-packages/vllm/model_executor/models/lfm2.py", line 332, in __init__
+(EngineCore pid=105903)     self.start_layer, self.end_layer, self.layers = make_layers(
+(EngineCore pid=105903)                                                     ^^^^^^^^^^^^
+(EngineCore pid=105903)   File "/content/lfm-serving/.venv/lib/python3.12/site-packages/vllm/model_executor/models/utils.py", line 643, in make_layers
+(EngineCore pid=105903)     + get_offloader().wrap_modules(
+(EngineCore pid=105903)       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=105903)   File "/content/lfm-serving/.venv/lib/python3.12/site-packages/vllm/model_executor/offloader/base.py", line 104, in wrap_modules
+(EngineCore pid=105903)     return list(modules_generator)
+(EngineCore pid=105903)            ^^^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=105903)   File "/content/lfm-serving/.venv/lib/python3.12/site-packages/vllm/model_executor/models/utils.py", line 644, in <genexpr>
+(EngineCore pid=105903)     layer_fn(prefix=f"{prefix}.{idx}") for idx in range(start_layer, end_layer)
+(EngineCore pid=105903)     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=105903)   File "/content/lfm-serving/.venv/lib/python3.12/site-packages/vllm/model_executor/models/lfm2.py", line 323, in get_layer
+(EngineCore pid=105903)     return layer_class(
+(EngineCore pid=105903)            ^^^^^^^^^^^^
+(EngineCore pid=105903)   File "/content/lfm-serving/.venv/lib/python3.12/site-packages/vllm/model_executor/models/lfm2.py", line 266, in __init__
+(EngineCore pid=105903)     self.feed_forward = Lfm2MLP(
+(EngineCore pid=105903)                         ^^^^^^^^
+(EngineCore pid=105903)   File "/content/lfm-serving/.venv/lib/python3.12/site-packages/vllm/model_executor/models/lfm2.py", line 72, in __init__
+(EngineCore pid=105903)     self.w13 = MergedColumnParallelLinear(
+(EngineCore pid=105903)                ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=105903)   File "/content/lfm-serving/.venv/lib/python3.12/site-packages/vllm/model_executor/layers/linear.py", line 652, in __init__
+(EngineCore pid=105903)     super().__init__(
+(EngineCore pid=105903)   File "/content/lfm-serving/.venv/lib/python3.12/site-packages/vllm/model_executor/layers/linear.py", line 477, in __init__
+(EngineCore pid=105903)     self.quant_method.create_weights(
+(EngineCore pid=105903)   File "/content/lfm-serving/.venv/lib/python3.12/site-packages/vllm/model_executor/layers/quantization/compressed_tensors/compressed_tensors.py", line 826, in create_weights
+(EngineCore pid=105903)     layer.scheme.create_weights(
+(EngineCore pid=105903)   File "/content/lfm-serving/.venv/lib/python3.12/site-packages/vllm/model_executor/layers/quantization/compressed_tensors/schemes/compressed_tensors_w4a8_int.py", line 105, in create_weights
+(EngineCore pid=105903)     kernel_type = choose_mp_linear_kernel(mp_linear_kernel_config)
+(EngineCore pid=105903)                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=105903)   File "/content/lfm-serving/.venv/lib/python3.12/site-packages/vllm/model_executor/kernels/linear/__init__.py", line 685, in choose_mp_linear_kernel
+(EngineCore pid=105903)     raise ValueError(
+(EngineCore pid=105903) ValueError: Failed to find a kernel that can implement the WNA16 linear layer. Reasons: 
+(EngineCore pid=105903)  CutlassW4A8LinearKernel cannot implement due to: CUTLASS W4A8 requires compute capability of 90 (Hopper)
+(EngineCore pid=105903)  MacheteLinearKernel cannot implement due to: Machete requires compute capability of 90 (Hopper)
+(EngineCore pid=105903)  AllSparkLinearKernel cannot implement due to: AllSpark currently does not support device_capability = 120.
+(EngineCore pid=105903)  MarlinLinearKernel cannot implement due to: Quant type (int4) not supported by  Marlin, supported types are: [ScalarType.uint4b8, ScalarType.uint8b128, ScalarType.float8_e4m3fn, ScalarType.float4_e2m1f]
+(EngineCore pid=105903)  ConchLinearKernel cannot implement due to: Weight type (int4) not supported by ConchLinearKernel, supported types are: [ScalarType.uint4, ScalarType.uint8, ScalarType.uint4b8, ScalarType.uint8b128]
+(EngineCore pid=105903)  ExllamaLinearKernel cannot implement due to: Exllama only supports float16 activations
+[rank0]:[W725 08:07:38.884624880 ProcessGroupNCCL.cpp:1575] Warning: WARNING: destroy_process_group() was not called before program exit, which can leak resources. For more info, please see https://pytorch.org/docs/stable/distributed.html#shutdown (function operator())
+(APIServer pid=105473) Traceback (most recent call last):
+(APIServer pid=105473)   File "<frozen runpy>", line 198, in _run_module_as_main
+(APIServer pid=105473)   File "<frozen runpy>", line 88, in _run_code
+(APIServer pid=105473)   File "/content/lfm-serving/.venv/lib/python3.12/site-packages/vllm/entrypoints/openai/api_server.py", line 718, in <module>
+(APIServer pid=105473)     uvloop.run(run_server(args))
+(APIServer pid=105473)   File "/content/lfm-serving/.venv/lib/python3.12/site-packages/uvloop/__init__.py", line 96, in run
+(APIServer pid=105473)     return __asyncio.run(
+(APIServer pid=105473)            ^^^^^^^^^^^^^^
+(APIServer pid=105473)   File "/usr/lib/python3.12/asyncio/runners.py", line 195, in run
+(APIServer pid=105473)     return runner.run(main)
+(APIServer pid=105473)            ^^^^^^^^^^^^^^^^
+(APIServer pid=105473)   File "/usr/lib/python3.12/asyncio/runners.py", line 118, in run
+(APIServer pid=105473)     return self._loop.run_until_complete(task)
+(APIServer pid=105473)            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(APIServer pid=105473)   File "uvloop/loop.pyx", line 1518, in uvloop.loop.Loop.run_until_complete
+(APIServer pid=105473)   File "/content/lfm-serving/.venv/lib/python3.12/site-packages/uvloop/__init__.py", line 48, in wrapper
+(APIServer pid=105473)     return await main
+(APIServer pid=105473)            ^^^^^^^^^^
+(APIServer pid=105473)   File "/content/lfm-serving/.venv/lib/python3.12/site-packages/vllm/entrypoints/openai/api_server.py", line 678, in run_server
+(APIServer pid=105473)     await run_server_worker(listen_address, sock, args, **uvicorn_kwargs)
+(APIServer pid=105473)   File "/content/lfm-serving/.venv/lib/python3.12/site-packages/vllm/entrypoints/openai/api_server.py", line 692, in run_server_worker
+(APIServer pid=105473)     async with build_async_engine_client(
+(APIServer pid=105473)                ^^^^^^^^^^^^^^^^^^^^^^^^^^
+(APIServer pid=105473)   File "/usr/lib/python3.12/contextlib.py", line 210, in __aenter__
+(APIServer pid=105473)     return await anext(self.gen)
+(APIServer pid=105473)            ^^^^^^^^^^^^^^^^^^^^^
+(APIServer pid=105473)   File "/content/lfm-serving/.venv/lib/python3.12/site-packages/vllm/entrypoints/openai/api_server.py", line 100, in build_async_engine_client
+(APIServer pid=105473)     async with build_async_engine_client_from_engine_args(
+(APIServer pid=105473)                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(APIServer pid=105473)   File "/usr/lib/python3.12/contextlib.py", line 210, in __aenter__
+(APIServer pid=105473)     return await anext(self.gen)
+(APIServer pid=105473)            ^^^^^^^^^^^^^^^^^^^^^
+(APIServer pid=105473)   File "/content/lfm-serving/.venv/lib/python3.12/site-packages/vllm/entrypoints/openai/api_server.py", line 136, in build_async_engine_client_from_engine_args
+(APIServer pid=105473)     async_llm = AsyncLLM.from_vllm_config(
+(APIServer pid=105473)                 ^^^^^^^^^^^^^^^^^^^^^^^^^^
+(APIServer pid=105473)   File "/content/lfm-serving/.venv/lib/python3.12/site-packages/vllm/v1/engine/async_llm.py", line 217, in from_vllm_config
+(APIServer pid=105473)     return cls(
+(APIServer pid=105473)            ^^^^
+(APIServer pid=105473)   File "/content/lfm-serving/.venv/lib/python3.12/site-packages/vllm/v1/engine/async_llm.py", line 146, in __init__
+(APIServer pid=105473)     self.engine_core = EngineCoreClient.make_async_mp_client(
+(APIServer pid=105473)                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(APIServer pid=105473)   File "/content/lfm-serving/.venv/lib/python3.12/site-packages/vllm/tracing/otel.py", line 178, in sync_wrapper
+(APIServer pid=105473)     return func(*args, **kwargs)
+(APIServer pid=105473)            ^^^^^^^^^^^^^^^^^^^^^
+(APIServer pid=105473)   File "/content/lfm-serving/.venv/lib/python3.12/site-packages/vllm/v1/engine/core_client.py", line 131, in make_async_mp_client
+(APIServer pid=105473)     return AsyncMPClient(*client_args)
+(APIServer pid=105473)            ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(APIServer pid=105473)   File "/content/lfm-serving/.venv/lib/python3.12/site-packages/vllm/tracing/otel.py", line 178, in sync_wrapper
+(APIServer pid=105473)     return func(*args, **kwargs)
+(APIServer pid=105473)            ^^^^^^^^^^^^^^^^^^^^^
+(APIServer pid=105473)   File "/content/lfm-serving/.venv/lib/python3.12/site-packages/vllm/v1/engine/core_client.py", line 932, in __init__
+(APIServer pid=105473)     super().__init__(
+(APIServer pid=105473)   File "/content/lfm-serving/.venv/lib/python3.12/site-packages/vllm/v1/engine/core_client.py", line 567, in __init__
+(APIServer pid=105473)     with launch_core_engines(
+(APIServer pid=105473)          ^^^^^^^^^^^^^^^^^^^^
+(APIServer pid=105473)   File "/usr/lib/python3.12/contextlib.py", line 144, in __exit__
+(APIServer pid=105473)     next(self.gen)
+(APIServer pid=105473)   File "/content/lfm-serving/.venv/lib/python3.12/site-packages/vllm/v1/engine/utils.py", line 1150, in launch_core_engines
+(APIServer pid=105473)     wait_for_engine_startup(
+(APIServer pid=105473)   File "/content/lfm-serving/.venv/lib/python3.12/site-packages/vllm/v1/engine/utils.py", line 1209, in wait_for_engine_startup
+(APIServer pid=105473)     raise RuntimeError(
+(APIServer pid=105473) RuntimeError: Engine core initialization failed. See root cause above. Failed core proc(s): {}

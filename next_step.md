@@ -41,8 +41,24 @@
 > 4. Build/push `siconhoccode/lfm-serving:fp8-metadata-fastpath` with
 >    `submission/Dockerfile.fp8-metadata-fastpath-local`, then submit
 >    `submission/docker-compose.fp8-metadata-fastpath-seqs8.yml`.
-> 4. Submit `submission/docker-compose.fp8-metadata-fastpath-seqs16.yml` only if
+> 5. Submit `submission/docker-compose.fp8-metadata-fastpath-seqs16.yml` only if
 >    either axis improves official failures/ERS.
+>
+> **Two more directions explored and closed out (2026-07-25):**
+> - **W4A8-FP8 mixed quantization** (int4 MLP layers 0-9 + FP8 elsewhere,
+>   Hopper-native Machete/CUTLASS kernel): built successfully
+>   (`artifacts/lfm2-w4afp8-mlp0-9-fp8-rest/`, gitignored) but cannot be
+>   validated on this dev box at all -- the kernel is gated to
+>   `compute_capability == 90` (Hopper) in vLLM's own dispatch code, and this
+>   box is Blackwell. No Hopper GPU available to this project. Blocked
+>   pending a decision on whether to submit blind. See
+>   `SUBMISSION_RESULTS.md` "W4A8-FP8 mixed quantization attempt".
+> - **Speculative decoding, `suffix` method**: tested, CRASHES under real
+>   concurrent load (417/420 failures, different crash signature than the
+>   earlier `ngram` test but same root cause -- LFM2's hybrid Mamba/ShortConv
+>   KV-block accounting doesn't survive spec-decode's rollback). Closes the
+>   entire speculative-decoding direction, including training a custom
+>   MLP-speculator/EAGLE head -- see EXPERIMENTS.md "T6" update.
 >
 > Local CUDA diagnostics are smoke/correctness evidence only. Do not resurrect
 > BitsAndBytes W4, scheduler/cache sweeps, or stock W4 compressed-tensors unless

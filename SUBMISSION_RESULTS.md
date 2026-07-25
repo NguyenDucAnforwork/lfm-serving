@@ -171,6 +171,60 @@ spec scores all 420 (warmup_count=0). Fixed trace is
 `trace_grading_spec_v2.jsonl`; `run_experiment.sh` now defaults to it and
 preflights the trace shape before every run.
 
+## W4A8-FP8 mixed quantization attempt (Q4-A, 2026-07-25) -- built, cannot validate locally
+
+Explored a Hopper-native low-bit path: int4 weights + FP8 dynamic
+activations (group_size=128), applied only to the early-MLP layers
+(`feed_forward.{w1,w2,w3}` on layers 0-9), with attention + late-MLP
+(layers 10-15) + `lm_head` in FP8 and ShortConv (`conv.*`) left BF16
+(consistent with the ShortConv-quant rejection above -- no reason to
+reintroduce that variable here).
+
+Verified first that this is a real, already-supported vLLM code path, not
+speculative: `vllm/model_executor/layers/quantization/compressed_tensors/schemes/compressed_tensors_w4a8_fp8.py`
+exists in both the installed v0.22.1 and v0.25.1, requires exactly
+`group_size=128` (matches the recipe used here), and dispatches to
+Machete/CUTLASS W4A8 kernels via `choose_mp_linear_kernel`.
+
+Built successfully with `llmcompressor==0.12.0` (`scripts/quantize_w4afp8_mlp_early.py`,
+`compressed-tensors` `W4AFP8` preset for the GPTQ-quantized early-MLP
+group, `FP8_DYNAMIC` for the rest), 256-sample on-policy-adjacent
+calibration (`HuggingFaceH4/ultrachat_200k`), checkpoint at
+`artifacts/lfm2-w4afp8-mlp0-9-fp8-rest/` (1.5GB vs 2.2GB original BF16).
+Confirmed via the saved `config.json`'s `quantization_config`: correct
+mixed-precision `config_groups` (int4/group128/FP8-token for early MLP,
+FP8/channel for the rest), correct `ignore` list (all 10 ShortConv
+`in_proj`/`out_proj` pairs, confirming they're untouched).
+
+**Cannot be validated on this dev box at all -- not even a load/coherence
+smoke test.** Local load attempt failed:
+```
+CutlassW4A8LinearKernel cannot implement due to: CUTLASS W4A8 requires compute capability of 90 (Hopper)
+MacheteLinearKernel cannot implement due to: Machete requires compute capability of 90 (Hopper)
+```
+Read the dispatch logic directly (`compressed_tensors.py:_is_fp8_w4a8_sm90`):
+the FP8-activation W4A8 scheme is only selected when
+`compute_capability == 90` (`match_exact=True`) -- Hopper only. This dev
+box is Blackwell (SM120), so vLLM silently falls back to a different W4A8
+scheme (`CompressedTensorsW4A8Int`), which then also fails because no
+available kernel (Marlin, Conch, Exllama, AllSpark) supports this int4
+config on SM120 either. **This is exactly what the Hopper-exclusive design
+of this technique implies** -- there is no code or config bug to fix here,
+it fundamentally cannot be exercised on non-Hopper hardware. On real H200
+(SM90 exactly), the same checkpoint should correctly dispatch to
+Machete/CUTLASS -- but this is unverified.
+
+**Status: blocked.** No Hopper-class GPU available to this project (dev
+box is Blackwell, no budget for a temporary H100/H200 rental). The only
+way to learn anything about this checkpoint -- including basic load
+success -- is an official H200 submission, with zero prior local safety
+net (a first for this project; every other candidate so far had at least
+a local coherence check before spending a submission slot). Checkpoint and
+`Dockerfile`/compose not yet written for submission pending a decision on
+whether this risk is worth a slot. Artifact retained at
+`artifacts/lfm2-w4afp8-mlp0-9-fp8-rest/` (gitignored, regenerable via
+`scripts/quantize_w4afp8_mlp_early.py`).
+
 ## Current submit/probe queue (updated 2026-07-25, CPU-bottleneck hypothesis)
 
 ShortConv candidates (Q1/Q2) are REJECTED, see verdict above. All future

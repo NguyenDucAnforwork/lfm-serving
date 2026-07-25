@@ -1,0 +1,26 @@
+{
+  "n_requests": 420,
+  "n_errors": 417,
+  "error_rate": 0.9928571428571429,
+  "ers_mean": 0.0014099426889296479,
+  "ers_mean_pct": 0.1409942688929648,
+  "ttft_ms_mean": 602.5045886684287,
+  "ttft_ms_p50": 553.121592001844,
+  "ttft_ms_p95": 1140.718543802359,
+  "tpot_ms_mean": 8.732959222308473,
+  "tpot_ms_p95": 13.110493818100528,
+  "latency_ms_mean": 12.084982316706114,
+  "latency_ms_p95": 0.7839925483494864,
+  "benchmark_duration_s": 320.4496461760027,
+  "prefix_overlap": "strong",
+  "token_chunk_mismatch_count": 1,
+  "per_turn_prompt_tokens": {
+    "0": {
+      "target": 2150,
+      "actual_mean": 2165,
+      "actual_min": 2165,
+      "actual_max": 2165,
+      "n": 1
+    }
+  }
+}
