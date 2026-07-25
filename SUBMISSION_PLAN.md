@@ -200,14 +200,40 @@ gibberish/replacement-character-like fragments.
 
 Current official best is FP8 `fp8_per_tensor`, `max_num_seqs=8`,
 `max_num_batched_tokens=512`: ERS 60.89 best observed, 59.78-60.89 across three
-identical official runs, TBT median 4 ms, failures 4, accuracy drop 0. The
-immediate probe order is:
+identical official runs, TBT median 4 ms, failures 4, accuracy drop 0.
 
-1. `submission/docker-compose.fp8-seqs16.yml` with the existing FP8 image.
-2. Build/push `siconhoccode/lfm-serving:fp8-metadata-fastpath`, submit
+**UPDATE 2026-07-25: new top-priority candidates found and locally validated.**
+Verified directly against vLLM source that `ShortConv.__init__` never
+receives `quant_config` (v0.22.1 AND v0.25.1) -- so the 10 ShortConv layers'
+`in_proj`/`out_proj` (~168M params, ~14% of the model) silently stay BF16
+under `--quantization=fp8_per_tensor`, while `Lfm2MLP`/attention right next
+to them ARE quantized. This is upstream vLLM PR #48917 (merged 2026-07-21),
+backported locally as `patches/apply_vllm_shortconv_quant.py`. Local
+validation (model load -160 MiB, matching the ~168M-param prediction almost
+exactly; TPOT mean 1.89ms -> 1.79ms; 0/420 errors; GSM8K/ARC/GPQA all within
+noise of baseline) is in `SUBMISSION_RESULTS.md` "New candidates
+(2026-07-25)". Local numbers only establish correctness/no-regression, not
+win size -- this dev box's GPU is far less bandwidth-bound than H200.
+
+The immediate probe order is now:
+
+1. `submission/docker-compose.fp8-shortconv-quant-seqs8.yml` (Q1: ShortConv
+   fix alone, v0.25.1 base) -- submit FIRST, single biggest lever identified
+   so far.
+2. `submission/docker-compose.fp8-shortconv-quant-retention-seqs8.yml` (Q2:
+   Q1 + hybrid-prefix retention, vLLM PR #47782 already in v0.25.1) --
+   submit right after Q1 in the same session if possible.
+3. `submission/docker-compose.fp8-seqs16.yml` with the existing (unpatched)
+   FP8 image -- demoted below Q1/Q2 since a seqs sweep on the old image is
+   lower value once the ShortConv fix changes the decode-cost picture.
+4. Build/push `siconhoccode/lfm-serving:fp8-metadata-fastpath`, submit
    `submission/docker-compose.fp8-metadata-fastpath-seqs8.yml`.
-3. Submit `submission/docker-compose.fp8-metadata-fastpath-seqs16.yml` only if
-   (1) or (2) improves official failures/ERS.
+5. Submit `submission/docker-compose.fp8-metadata-fastpath-seqs16.yml` only if
+   either of the above improves official failures/ERS.
+6. Only after Q1/Q2 official results land: consider a
+   `max_num_seqs`/`max_num_batched_tokens` sweep anchored on whichever of
+   Q1/Q2 wins -- not before, since local sweeps have twice inverted on H200
+   already (see the `max_num_batched_tokens` and W4 notes above).
 
 ## 3. Final-5 selection (after the online round ends)
 

@@ -6,14 +6,24 @@
 > compressed-tensors with both Marlin and Machete scored around 49 ERS with TBT
 > median 6 ms and is rejected for H200/MIG despite good RTX 3090 local latency.
 >
-> Current action queue:
+> **UPDATE 2026-07-25**: two new higher-priority candidates found and locally
+> validated -- see `SUBMISSION_RESULTS.md` "New candidates (2026-07-25)" and
+> `SUBMISSION_PLAN.md`'s updated probe order. Verified against vLLM source
+> that `ShortConv.__init__` never receives `quant_config` (v0.22.1 AND
+> v0.25.1), leaving ~168M params (~14% of the model) silently unquantized
+> under `fp8_per_tensor` -- backported upstream PR #48917 as
+> `patches/apply_vllm_shortconv_quant.py`. Current action queue:
 >
-> 1. Submit `submission/docker-compose.fp8-seqs16.yml` using existing
->    `siconhoccode/lfm-serving:fp8`.
-> 2. Build/push `siconhoccode/lfm-serving:fp8-metadata-fastpath` with
+> 1. Submit `submission/docker-compose.fp8-shortconv-quant-seqs8.yml` (Q1:
+>    ShortConv fix alone) FIRST.
+> 2. Submit `submission/docker-compose.fp8-shortconv-quant-retention-seqs8.yml`
+>    (Q2: Q1 + hybrid-prefix retention, PR #47782, already in v0.25.1) right after.
+> 3. Submit `submission/docker-compose.fp8-seqs16.yml` using existing
+>    `siconhoccode/lfm-serving:fp8` -- demoted below Q1/Q2.
+> 4. Build/push `siconhoccode/lfm-serving:fp8-metadata-fastpath` with
 >    `submission/Dockerfile.fp8-metadata-fastpath-local`, then submit
 >    `submission/docker-compose.fp8-metadata-fastpath-seqs8.yml`.
-> 3. Submit `submission/docker-compose.fp8-metadata-fastpath-seqs16.yml` only if
+> 5. Submit `submission/docker-compose.fp8-metadata-fastpath-seqs16.yml` only if
 >    either axis improves official failures/ERS.
 >
 > Local CUDA diagnostics are smoke/correctness evidence only. Do not resurrect

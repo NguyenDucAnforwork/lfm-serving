@@ -2163,3 +2163,167 @@ Current prepared probes:
   Local trace passed (`TBT mean 2.973 ms`, 0 failures, Marlin autodetect), but
   local GSM8K limit-200 regressed from 0.660 to 0.605, and official W4 stock
   backend results make it low-confidence. Use at most one slot.
+
+## Session 12: ShortConv quant_config bug found and fixed; trace warmup bug fixed (2026-07-25)
+
+### Trace/warmup bug
+
+`benchmark/gen_spec_trace.py` copied `in_warmup` straight from the older
+`trace_grading_public.jsonl` without updating it, so conv_id 0-14
+(90/420 rows) stayed flagged `in_warmup: true` and were silently excluded
+from local ERS by `compute_ers.py`'s default `exclude_warmup=True`. The
+official grader for the current workload spec scores all 420 requests
+(no warmup carve-out). Fixed: `in_warmup` is now forced `False` for every
+row, output goes to `trace_grading_spec_v2.jsonl` (old trace kept for
+comparison), with asserts (420 rows, 0 warmup, turn_idx 0-5).
+`scripts/run_experiment.sh` now defaults to `TRACE=trace_grading_spec_v2.jsonl
+WORKLOAD=spec` and preflights the trace shape before starting the server.
+
+### ShortConv quant_config bug -- the actual finding
+
+LFM2.5-1.2B has 16 layers: 10 `ShortConv` (conv/Mamba-family) layers and 6
+full-attention layers. Read `vllm/model_executor/models/lfm2.py` and
+`vllm/model_executor/layers/mamba/short_conv.py` directly, both from the
+installed `vllm==0.22.1` and fetched verbatim from the `v0.25.1` GitHub tag
+(byte-identical in the relevant sections between the two versions):
+
+- `Lfm2ShortConvDecoderLayer.__init__` receives `quant_config` and forwards
+  it to `Lfm2MLP` -- but builds `self.short_conv = ShortConv(...)` WITHOUT
+  passing `quant_config` at all.
+- `ShortConv.__init__` doesn't even accept a `quant_config` parameter --
+  `self.in_proj` (`MergedColumnParallelLinear`) and `self.out_proj`
+  (`RowParallelLinear`) are constructed with no quantization method,
+  unconditionally.
+
+Result: under `--quantization=fp8_per_tensor`, `Lfm2MLP` and the attention
+projections get FP8-wrapped as expected, but the 10 ShortConv layers'
+`in_proj`/`out_proj` silently stay BF16. Math: hidden_size=2048,
+`in_proj` = 2048 x (3 x 2048) = 12,582,912 params, `out_proj` = 2048 x 2048
+= 4,194,304 params, 16,777,216/layer x 10 layers = **167,772,160 params
+(~14% of the 1.2B model) never quantized** despite the flag saying so.
+
+This is exactly what upstream vLLM PR #48917 ("Fix LFM2 ShortConv
+Quantization Configuration", merged 2026-07-21 by hmellor) fixes -- verified
+by fetching the PR directly: it adds `quant_config` to `ShortConv.__init__`
+and threads it through from `lfm2.py`/`lfm2_moe.py`. Not yet in `v0.25.1`
+(tagged before the merge date). Backported as
+`patches/apply_vllm_shortconv_quant.py`, following the same
+idempotent-site-packages-edit approach as
+`apply_vllm_decode_metadata_fastpath.py` (no CUDA extension rebuild needed --
+pure Python wiring change). Verified the patch applies cleanly and
+idempotently against both v0.22.1 and v0.25.1 source, diffs exactly match
+the PR's 6-line change, `ast.parse`-verified syntactically valid.
+
+### Local validation
+
+Note on hardware: this session ran on the dev box's actual GPU, an RTX PRO
+6000 Blackwell (97GB, otherwise idle) -- much faster and much less
+bandwidth-bound than the MIG H200 slice used for official grading. Per the
+established rule in this file ("local RTX 3090 replay is now smoke/
+correctness evidence only"), the same applies here even more strongly:
+absolute ERS/TPOT numbers below are NOT a prediction of official win size,
+only a correctness/no-regression check.
+
+Fixed a startup blocker along the way: FlashInfer's `check_cuda_arch()` JIT
+path raised `RuntimeError: FlashInfer requires GPUs with sm75 or higher` on
+this GPU (a JIT/arch-detection bug unrelated to the ShortConv fix, specific
+to this Blackwell card + installed FlashInfer version). Worked around with
+`VLLM_USE_FLASHINFER_SAMPLER=0` (falls back to the PyTorch-native sampler);
+does not affect ShortConv/FP8 quantization correctness.
+
+**Q1 (ShortConv fix alone, same config as `fp8_h200shape.env` except
+`gpu_memory_utilization` scaled for this GPU)**, before vs. after applying
+the patch to the same running venv, same trace (`trace_grading_spec_v2.jsonl`,
+420 requests):
+
+| | Before (unpatched) | After (Q1) | Delta |
+|---|---:|---:|---:|
+| Model load memory | 1.39 GiB | 1.23 GiB | -160 MiB |
+| KV cache pool | 19.04 GiB | 19.22 GiB | +0.18 GiB |
+| TPOT mean/p95 (ms) | 1.889/2.095 | 1.787/1.940 | -5.4%/-7.4% |
+| Local ERS | 85.98% | 86.70% | +0.72pp |
+| Errors | 0/420 | 0/420 | -- |
+
+The -160 MiB model-load delta matches the ~168M-param prediction almost
+exactly (168M params x 1 byte saved BF16->FP8 ~ 160 MiB) -- direct evidence
+the patch quantizes the intended layers, independent of any downstream
+ERS/TPOT interpretation. TPOT's small relative improvement (not the
+"critical to fix, huge miss" of the ShortConv discovery) is expected on this
+hardware: TPOT is already tiny here (~1.9ms) because this GPU isn't
+bandwidth-bound at this batch size the way the grading H200 slice is, so a
+14%-of-weights bandwidth saving shows up as a small delta on an already-small
+number. The TTFT numbers from this pair of runs are NOT comparable
+(the "before" run had several 20-30s outliers from cold Triton JIT
+compilation of first-seen shapes; the "after" run inherited a warm on-disk
+JIT cache from the first run and had none) -- TPOT and model-load-size are
+the clean signals from this comparison, not TTFT.
+
+Accuracy gate (separate venv, `lm-eval[api]==0.4.12`, plus
+`benchmark/gpqa_eval.py`'s ungated `hendrydong/gpqa_diamond_mc` mirror since
+no `HF_TOKEN` was available this session for the gated official dataset):
+
+| Task | Q1 (patched) | Baseline FP8 (unpatched) | Delta |
+|---|---:|---:|---:|
+| GSM8K (limit 200) strict | 0.665 +/- 0.034 | 0.65 | +0.015 |
+| GSM8K flexible | 0.675 +/- 0.033 | 0.66 | +0.015 |
+| ARC-challenge acc | 0.3874 +/- 0.014 | 0.3839 | +0.0035 |
+| ARC-challenge acc_norm | 0.4164 +/- 0.014 | 0.4266 | -0.0102 |
+| GPQA ungated-mirror (n=198) | 0.3333 (66/198) | 0.3131 (62/198) | +0.0202 |
+
+Every delta is within stderr noise; no sign of degradation from quantizing
+the additional ~168M params. Combined with the TPOT/VRAM/error-rate gate,
+Q1 passes both correctness/perf and accuracy checks locally.
+
+### Q2: ShortConv fix + hybrid-prefix retention (PR #47782)
+
+Checked whether `VLLM_PREFIX_CACHE_RETENTION_INTERVAL` (upstream vLLM PR
+#47782, "Preserve Marconi caching with selective hybrid cache retention",
+merged 2026-07-13) is already in `v0.25.1` -- yes, confirmed present in
+`envs.py`, so Q2 needs no additional backport beyond Q1's patch, just the
+env var baked into the image. `retention_interval=0` keeps only the latest
+completed prompt boundary instead of dense per-block retention, matching
+this workload's shape (shared 1000-token system prefix + growing
+per-conversation history).
+
+Important environment finding: the existing dev `.venv` is pinned to
+`vllm==0.22.1`, which does **not** have this env var at all -- setting it
+there is a silent no-op (confirmed: not present in that version's `envs.py`).
+Installed a separate `.venv-v0251` (real `vllm==0.25.1`, patched with the
+same `apply_vllm_shortconv_quant.py`) to actually exercise this code path
+locally.
+
+Ran the ERS trace replay and the 3-task accuracy gate concurrently on two
+server instances (ports 8000/8001, ~21.5GB VRAM pool each, well within this
+GPU's 97GB) to save wall-clock. Accuracy:
+
+| Task | Q2 | Q1 | Baseline |
+|---|---:|---:|---:|
+| GSM8K strict/flexible | 0.68/0.69 | 0.665/0.675 | 0.65/0.66 |
+| ARC acc/acc_norm | 0.3899/0.4164 | 0.3874/0.4164 | 0.3839/0.4266 |
+| GPQA ungated-mirror | 0.2929 (58/198) | 0.3333 (66/198) | 0.3131 (62/198) |
+
+All within noise; GPQA moved in the "wrong" direction vs. Q1/baseline but by
+less than one stderr (~0.032), consistent with sampling noise rather than
+degradation (retention interval is a cache-eviction policy, not a change to
+weights or computation). Model load 1.26 GiB on the v0.25.1+patch build
+matches Q1's 1.23 GiB on v0.22.1+patch, confirming ShortConv quantization is
+active on the v0.25.1 build too.
+
+ERS from the concurrent run was 72.64%, 0/420 errors -- **not clean evidence
+about retention's effect size**. It was measured while the accuracy gate ran
+concurrently on the same GPU (intentional, to save time) and on a
+freshly-installed venv with a cold torch-compile cache, both of which
+inflate TPOT/TTFT independent of the retention mechanism. The only clean
+signal from this run is "no crash, no error" -- confirms Q2 is safe to
+submit, not that it is faster or slower than Q1 locally.
+
+### Conclusion and next step
+
+Both Q1 and Q2 pass local correctness + accuracy gates. Neither has an
+official H200 number. This is now the top-priority open question -- see
+`SUBMISSION_RESULTS.md` "New candidates (2026-07-25)" and the updated probe
+order in `SUBMISSION_PLAN.md`. Do not run a `max_num_seqs`/
+`max_num_batched_tokens` sweep on top of Q1/Q2 until at least one has a real
+H200 result -- this file already has two confirmed cases
+(`max_num_batched_tokens=256` and W4-G64) where the local-to-H200 ranking
+inverted.

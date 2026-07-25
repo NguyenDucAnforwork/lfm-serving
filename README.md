@@ -472,6 +472,26 @@ anti-cheat rules, ruling out a runtime HF download).
   backend logs prove Machete or Marlin for `CompressedTensorsWNA16`, and
   accuracy diff is non-negative. Use `scripts/prepare_w4_submission.sh` to
   populate `submission/model` only after that PASS report.
+- `submission/docker-compose.fp8-shortconv-quant-seqs8.yml` — **Q1, new top
+  priority (2026-07-25)**. `FROM vllm/vllm-openai:v0.25.1` +
+  `patches/apply_vllm_shortconv_quant.py` (backports upstream vLLM PR #48917,
+  which was merged 2026-07-21 and confirmed missing from both v0.22.1 and
+  v0.25.1 by reading source directly): LFM2's 10 ShortConv layers'
+  `in_proj`/`out_proj` (~168M params, ~14% of the model) were silently BF16
+  under `--quantization=fp8_per_tensor` because `ShortConv.__init__` never
+  received `quant_config`. Locally verified: model load memory -160 MiB
+  (matches the ~168M-param prediction almost exactly), TPOT mean 1.89ms ->
+  1.79ms, 0/420 errors, GSM8K/ARC/GPQA all within noise of baseline — see
+  `SUBMISSION_RESULTS.md` "New candidates (2026-07-25)". No official H200
+  number yet.
+- `submission/docker-compose.fp8-shortconv-quant-retention-seqs8.yml` — **Q2**,
+  Q1 plus `VLLM_PREFIX_CACHE_RETENTION_INTERVAL=0` (upstream vLLM PR #47782,
+  already present in v0.25.1, no extra backport needed) baked into
+  `submission/Dockerfile.fp8-shortconv-quant-retention-local`. Targets this
+  workload's shared system prefix + growing per-conversation history shape.
+  Accuracy checks pass; local ERS/TPOT for this one specifically isn't clean
+  evidence (measured under concurrent GPU load + a cold torch-compile cache —
+  see `SUBMISSION_RESULTS.md`), so only correctness is established locally.
 
 **All numeric values above (except `max_model_len`/`gpu_memory_utilization`
 choices, which are RTX-3090-informed but H200-untested) are reasoned
