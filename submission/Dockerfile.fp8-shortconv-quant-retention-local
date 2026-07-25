@@ -1,0 +1,34 @@
+# Q2 probe: Q1 (ShortConv quant_config backport, PR #48917) + hybrid-prefix
+# retention (PR #47782, "Preserve Marconi caching with selective hybrid
+# cache retention"). Verified PR #47782 is ALREADY present in vLLM v0.25.1
+# (VLLM_PREFIX_CACHE_RETENTION_INTERVAL exists in envs.py) -- no extra
+# backport needed, just the same ShortConv patch as Q1 plus this one env
+# var. Baking it into the image (not compose `environment:`) so it applies
+# regardless of what the grading portal's docker-compose.yml passes through.
+#
+# retention_interval=0 keeps only the latest completed prompt boundary
+# instead of dense per-block retention -- matches this workload's shape
+# (shared 1000-tok system prefix + growing per-conversation history) where
+# only the latest turn boundary needs to stay cheaply reusable.
+#
+# Build context must be the repository root:
+#   docker build -f submission/Dockerfile.fp8-shortconv-quant-retention-local -t <image>:<tag> .
+#
+# Before building, copy/sync the official BF16 checkpoint into:
+#   submission/model/
+FROM vllm/vllm-openai:v0.25.1
+
+RUN pip install --no-cache-dir xxhash
+
+COPY patches/apply_vllm_shortconv_quant.py /tmp/apply_vllm_shortconv_quant.py
+RUN python3 /tmp/apply_vllm_shortconv_quant.py && rm /tmp/apply_vllm_shortconv_quant.py
+
+COPY submission/model /model
+
+ENV HF_HUB_OFFLINE=1 \
+    TRANSFORMERS_OFFLINE=1 \
+    VLLM_NO_USAGE_STATS=1 \
+    DO_NOT_TRACK=1 \
+    VLLM_PREFIX_CACHE_RETENTION_INTERVAL=0
+
+EXPOSE 8000
