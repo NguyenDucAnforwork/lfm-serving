@@ -171,38 +171,52 @@ spec scores all 420 (warmup_count=0). Fixed trace is
 `trace_grading_spec_v2.jsonl`; `run_experiment.sh` now defaults to it and
 preflights the trace shape before every run.
 
-## Current submit/probe queue (updated 2026-07-25 after ShortConv verdict)
+## Current submit/probe queue (updated 2026-07-25, CPU-bottleneck hypothesis)
 
 ShortConv candidates (Q1/Q2) are REJECTED, see verdict above. All future
 candidates build on `fp8-v1` (v0.22.1, unpatched) only.
 
+**New working hypothesis**: TBT median was 4ms in ALL FOUR ShortConv-verdict
+submissions, completely unmoved by quantizing an additional ~168M
+previously-unquantized params. That rules out GPU compute/weight-bandwidth
+as the real H200/MIG bottleneck. Most likely culprit: vLLM V1 runs 3
+processes (API server, EngineCore, GPU worker) competing for a small vCPU
+allocation on the MIG slice -- CPU-side per-step overhead, not GPU work, is
+probably the real floor. Reprioritized the queue around this.
+
 Submit in this order:
 
-1. **`submission/docker-compose.fp8-async-sync-seqs8.yml`** (explicit
+1. **`submission/docker-compose.fp8-metadata-fastpath-async-seqs8.yml`**
+   (image `<DOCKERHUB_USER>/lfm-serving:fp8-metadata-fastpath-async`) --
+   NEW, submit FIRST. Stacks two CPU-overhead mitigations: the decode
+   metadata fast-path patch (baked into the image, avoids re-uploading
+   per-step scheduling metadata for pure-decode batches) plus
+   `--async-scheduling` (overlaps CPU scheduling with GPU execution). Both
+   attack the CPU-bottleneck hypothesis above from different angles.
+   **Known risk**: a prior local probe on `--async-scheduling` with this
+   same base config found 2/420 gibberish outputs (session 10,
+   `EXPERIMENTS.md` "Async scheduling probe") despite good latency (ERS
+   69.5 local, TBT 2.78ms) -- that probe predates this session and was
+   never re-verified for coherence. Check output text before trusting any
+   ERS improvement from this image, official or local.
+2. **`submission/docker-compose.fp8-async-sync-seqs8.yml`** (explicit
    `--no-async-scheduling` control) and
-   **`submission/docker-compose.fp8-async-seqs8.yml`** (`--async-scheduling`)
-   -- both reuse the existing `fp8-v1` image, no new build needed (async
-   scheduling is a pure runtime CLI flag). Submit the sync control first as
-   a sanity check that explicit sync == current baseline, then async.
-   **Known risk before submitting async**: a prior local probe on this same
-   flag/config combination (`configs/fp8_async_scheduling.env`, session 10,
-   `EXPERIMENTS.md`) found 2/420 outputs contained gibberish/replacement-
-   character fragments, despite good latency (ERS 69.5 local, TBT 2.78ms).
-   That probe was against the RTX 3090 dev box, not H200 -- re-verify output
-   coherence (not just latency/ERS) before trusting an official async
-   submission; a fast ERS number with corrupted output is not a real win.
-2. `submission/docker-compose.fp8-seqs16.yml`
+   **`submission/docker-compose.fp8-async-seqs8.yml`** (`--async-scheduling`
+   alone, no metadata patch) -- both reuse the existing `fp8-v1` image, no
+   new build needed. Useful for decomposing item 1's result: if the
+   combined candidate wins, these two isolate how much came from each half.
+3. `submission/docker-compose.fp8-seqs16.yml`
    - Image: `siconhoccode/lfm-serving:fp8-v1`
    - Same validated FP8 config, only `max_num_seqs=8 -> 16`
    - Goal: test whether official 4-6 failures are queue/deadline starvation.
-3. Build/push `siconhoccode/lfm-serving:fp8-metadata-fastpath`, then submit
-   `submission/docker-compose.fp8-metadata-fastpath-seqs8.yml`
-   - Same runtime flags as best FP8.
-   - Bakes local vLLM decode metadata fast-path patch.
-   - Goal: test whether the measured local launch/copy event reduction transfers.
-4. Submit `submission/docker-compose.fp8-metadata-fastpath-seqs16.yml` only if
+4. `submission/docker-compose.fp8-metadata-fastpath-seqs8.yml` (metadata
+   patch alone, no async) -- image `siconhoccode/lfm-serving:fp8-metadata-fastpath`,
+   **not yet pushed**. Lower priority than item 1 now that the combined
+   candidate exists; only build this separately if item 1's result needs
+   decomposing and item 2's plain-async isolation isn't enough on its own.
+5. Submit `submission/docker-compose.fp8-metadata-fastpath-seqs16.yml` only if
    either probe above shows useful signal.
-5. Optional one-slot W4 probe:
+6. Optional one-slot W4 probe:
    `submission/docker-compose.w4a16-g64-mlp10-15-attn10-12-14-bf16.machete.yml`
    after building `siconhoccode/lfm-serving:w4a16-g64-mlp10-15-attn10-12-14-bf16`.
    This is not expected to beat FP8; local trace passed but GSM8K regressed.

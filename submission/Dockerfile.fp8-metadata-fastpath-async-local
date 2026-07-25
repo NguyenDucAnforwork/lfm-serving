@@ -1,0 +1,53 @@
+# Combined CPU-bottleneck candidate: decode metadata fast-path patch +
+# async scheduling, both attacking the same hypothesis from different
+# angles.
+#
+# Why this candidate: across 4 official H200 submissions (baseline,
+# v0.25.1, and two ShortConv-quantization variants -- see
+# SUBMISSION_RESULTS.md "VERDICT (2026-07-25)"), TBT median was 4ms in
+# EVERY run, completely unchanged despite quantizing an additional ~168M
+# previously-unquantized parameters. That rules out GPU compute/weight-
+# bandwidth as the real H200/MIG decode bottleneck. The likely culprit:
+# vLLM V1 runs 3 separate processes (API server, EngineCore, GPU worker)
+# competing for what is likely a small vCPU allocation on the MIG slice --
+# CPU-side per-step overhead (metadata upload, IPC, scheduling, SSE
+# serialization), not GPU work, is probably the real floor.
+#
+# This image stacks two mitigations for that:
+# - patches/apply_vllm_decode_metadata_fastpath.py: avoids re-uploading
+#   req_indices/query_pos/num_scheduled_tokens and the discard_request_mask
+#   every step for pure one-token decode batches. Measured only +1.4% TBT
+#   locally (RTX 3090/Blackwell, no real CPU constraint there) -- but that
+#   number was measured where CPU was never the bottleneck, so it likely
+#   understates the real H200 value.
+# - --async-scheduling (added in the compose command, not baked into this
+#   image): overlaps CPU scheduling work with GPU execution. KNOWN RISK:
+#   a prior local probe on this same flag found 2/420 gibberish outputs
+#   (EXPERIMENTS.md "Async scheduling probe", session 10) -- re-verify
+#   output coherence before trusting any ERS improvement from this image.
+#
+# Base is v0.22.1 (matches the fp8-v1 image behind the 60.89 baseline) --
+# NOT v0.25.1, after the confirmed v0.25.1 interaction hazard with the
+# ShortConv patch (unrelated code path, but no reason to reintroduce an
+# unnecessary variable here).
+#
+# Build context must be the repository root:
+#   docker build -f submission/Dockerfile.fp8-metadata-fastpath-async-local -t <image>:<tag> .
+#
+# Before building, copy/sync the official BF16 checkpoint into:
+#   submission/model/
+FROM vllm/vllm-openai:v0.22.1
+
+RUN pip install --no-cache-dir xxhash
+
+COPY patches/apply_vllm_decode_metadata_fastpath.py /tmp/apply_vllm_decode_metadata_fastpath.py
+RUN python3 /tmp/apply_vllm_decode_metadata_fastpath.py && rm /tmp/apply_vllm_decode_metadata_fastpath.py
+
+COPY submission/model /model
+
+ENV HF_HUB_OFFLINE=1 \
+    TRANSFORMERS_OFFLINE=1 \
+    VLLM_NO_USAGE_STATS=1 \
+    DO_NOT_TRACK=1
+
+EXPOSE 8000

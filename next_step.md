@@ -17,18 +17,28 @@
 > `SUBMISSION_RESULTS.md` "VERDICT (2026-07-25)". Do not submit
 > `fp8-shortconv-quant-retention` -- same regressing combination.
 >
-> Current action queue (pivoted back to `fp8-v1`, no ShortConv):
+> **New working hypothesis (2026-07-25)**: TBT median was 4ms in ALL FOUR
+> ShortConv-verdict submissions, unmoved by quantizing ~168M more params.
+> Rules out GPU compute/bandwidth as the real H200/MIG bottleneck -- most
+> likely culprit is CPU-side per-step overhead under a constrained vCPU
+> allocation (vLLM V1's 3 competing processes: API server, EngineCore, GPU
+> worker). Current action queue (pivoted back to `fp8-v1`, no ShortConv):
 >
-> 1. Submit `submission/docker-compose.fp8-async-sync-seqs8.yml` (explicit
->    `--no-async-scheduling` control), then
->    `submission/docker-compose.fp8-async-seqs8.yml` (`--async-scheduling`).
->    Both reuse the existing `fp8-v1` image, no build needed. **Known risk**:
->    a prior local probe on this same flag combo found 2/420 gibberish
->    outputs (see "Async scheduling probe" in `EXPERIMENTS.md`, session 10)
->    -- re-verify output coherence before trusting an async ERS win.
-> 2. Submit `submission/docker-compose.fp8-seqs16.yml` using existing
+> 1. Submit `submission/docker-compose.fp8-metadata-fastpath-async-seqs8.yml`
+>    (image `fp8-metadata-fastpath-async`) FIRST -- stacks the decode
+>    metadata fast-path patch + `--async-scheduling`, both attacking the
+>    CPU-bottleneck hypothesis. **Known risk**: a prior local probe on
+>    `--async-scheduling` found 2/420 gibberish outputs (see "Async
+>    scheduling probe" in `EXPERIMENTS.md`, session 10) -- re-verify output
+>    coherence before trusting an ERS win here.
+> 2. Submit `submission/docker-compose.fp8-async-sync-seqs8.yml` (explicit
+>    `--no-async-scheduling` control) and
+>    `submission/docker-compose.fp8-async-seqs8.yml` (`--async-scheduling`
+>    alone) to decompose item 1's result if needed -- both reuse the
+>    existing `fp8-v1` image, no build needed.
+> 3. Submit `submission/docker-compose.fp8-seqs16.yml` using existing
 >    `siconhoccode/lfm-serving:fp8-v1`.
-> 3. Build/push `siconhoccode/lfm-serving:fp8-metadata-fastpath` with
+> 4. Build/push `siconhoccode/lfm-serving:fp8-metadata-fastpath` with
 >    `submission/Dockerfile.fp8-metadata-fastpath-local`, then submit
 >    `submission/docker-compose.fp8-metadata-fastpath-seqs8.yml`.
 > 4. Submit `submission/docker-compose.fp8-metadata-fastpath-seqs16.yml` only if

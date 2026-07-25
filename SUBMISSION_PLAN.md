@@ -224,23 +224,37 @@ regressing v0.25.1+patch combination. Local RTX-class hardware still does
 not predict H200 win/loss size; this is now the third confirmed case in
 this project (after `max_num_batched_tokens=256` and W4-G64).
 
-**Current probe order (pivoted back to `fp8-v1`, no ShortConv):**
+**Current probe order (pivoted back to `fp8-v1`, no ShortConv; new
+CPU-bottleneck hypothesis -- see `SUBMISSION_RESULTS.md` "Current
+submit/probe queue"):** TBT median was 4ms in all four ShortConv-verdict
+submissions, unmoved by quantizing ~168M more params -- rules out GPU
+compute/bandwidth as the H200 bottleneck, points at CPU-side per-step
+overhead under vLLM V1's 3-process architecture competing for a likely
+small vCPU allocation on the MIG slice.
 
-1. `submission/docker-compose.fp8-async-sync-seqs8.yml` (explicit
-   `--no-async-scheduling` control) then
-   `submission/docker-compose.fp8-async-seqs8.yml` (`--async-scheduling`) --
-   both reuse the existing `fp8-v1` image, no new build needed. **Re-verify
-   output coherence before trusting an async ERS number** -- see the
-   gibberish-output note a few paragraphs above; that probe predates this
-   session and was never re-confirmed clean.
-2. `submission/docker-compose.fp8-seqs16.yml` with the existing `fp8-v1`
+1. `submission/docker-compose.fp8-metadata-fastpath-async-seqs8.yml` (image
+   `fp8-metadata-fastpath-async`) FIRST -- stacks the decode metadata
+   fast-path patch (baked into the image) with `--async-scheduling`, both
+   attacking the CPU-bottleneck hypothesis. **Re-verify output coherence
+   before trusting an ERS number here** -- a prior local probe on
+   `--async-scheduling` found 2/420 gibberish outputs (session 10,
+   `EXPERIMENTS.md` "Async scheduling probe"), never re-confirmed clean.
+2. `submission/docker-compose.fp8-async-sync-seqs8.yml` (explicit
+   `--no-async-scheduling` control) and
+   `submission/docker-compose.fp8-async-seqs8.yml` (`--async-scheduling`
+   alone) -- both reuse the existing `fp8-v1` image, no build needed. Use
+   to decompose item 1's result if it shows a win.
+3. `submission/docker-compose.fp8-seqs16.yml` with the existing `fp8-v1`
    image -- test whether the official 4-6 failures are queue/deadline
    starvation.
-3. Build/push `siconhoccode/lfm-serving:fp8-metadata-fastpath`, submit
-   `submission/docker-compose.fp8-metadata-fastpath-seqs8.yml`.
-4. Submit `submission/docker-compose.fp8-metadata-fastpath-seqs16.yml` only if
+4. Build/push `siconhoccode/lfm-serving:fp8-metadata-fastpath` (metadata
+   patch alone, no async), submit
+   `submission/docker-compose.fp8-metadata-fastpath-seqs8.yml` -- lower
+   priority now that item 1 already includes this patch; only needed to
+   decompose item 1 further.
+5. Submit `submission/docker-compose.fp8-metadata-fastpath-seqs16.yml` only if
    either of the above improves official failures/ERS.
-5. Only after the async A/B lands: consider a `max_num_seqs`/
+6. Only after the CPU-bottleneck candidates land: consider a `max_num_seqs`/
    `max_num_batched_tokens` sweep anchored on whichever config wins -- not
    before, since local sweeps have twice inverted on H200 already (see the
    `max_num_batched_tokens` and W4 notes above).
