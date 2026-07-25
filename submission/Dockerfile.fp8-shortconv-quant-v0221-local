@@ -1,0 +1,35 @@
+# Q1-isolated: ShortConv quant_config fix (PR #48917) on the SAME v0.22.1
+# base as the current best official submission (ERS 60.89). Does NOT bump
+# to v0.25.1.
+#
+# Why this exists: the first Q1 submission (Dockerfile.fp8-shortconv-quant-local,
+# v0.25.1 base) scored ERS 51.65 -- WORSE than baseline, with TBT completely
+# UNCHANGED (4ms, same as baseline -- no ShortConv win visible at all) and
+# TTFT much worse (p50 81ms vs baseline's ~50ms). That combination points at
+# a regression from switching v0.22.1 -> v0.25.1 itself (different attention
+# backend/scheduling/defaults), not from the ShortConv fix -- but the two
+# variables were changed together, so the original Q1 submission cannot
+# distinguish "ShortConv fix helped/hurt" from "v0.25.1 base helped/hurt".
+# This build isolates the ShortConv fix alone, on the exact base image the
+# 60.89 baseline was measured on.
+#
+# Build context must be the repository root:
+#   docker build -f submission/Dockerfile.fp8-shortconv-quant-v0221-local -t <image>:<tag> .
+#
+# Before building, copy/sync the official BF16 checkpoint into:
+#   submission/model/
+FROM vllm/vllm-openai:v0.22.1
+
+RUN pip install --no-cache-dir xxhash
+
+COPY patches/apply_vllm_shortconv_quant.py /tmp/apply_vllm_shortconv_quant.py
+RUN python3 /tmp/apply_vllm_shortconv_quant.py && rm /tmp/apply_vllm_shortconv_quant.py
+
+COPY submission/model /model
+
+ENV HF_HUB_OFFLINE=1 \
+    TRANSFORMERS_OFFLINE=1 \
+    VLLM_NO_USAGE_STATS=1 \
+    DO_NOT_TRACK=1
+
+EXPOSE 8000

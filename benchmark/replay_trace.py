@@ -121,6 +121,20 @@ async def send_turn(
     if n_output_tokens is None:
         n_output_tokens = len(token_times)  # fallback: 1 SSE content-delta ~= 1 token
 
+    # Validate the "1 SSE content-delta == 1 token" assumption TPOT relies on.
+    # If vLLM ever batches multiple tokens into one chunk (or splits one token
+    # across chunks), gap-based TPOT would be wrong even though it looks
+    # plausible. Flag any request where the SSE chunk count doesn't match the
+    # server-reported completion_tokens within a small tolerance.
+    sse_content_chunks = len(token_times)
+    chunk_token_ratio = (
+        sse_content_chunks / n_output_tokens if n_output_tokens else None
+    )
+    token_chunk_mismatch = (
+        n_output_tokens is not None
+        and abs(sse_content_chunks - n_output_tokens) > 2
+    )
+
     tpot_mean_ms = None
     tpot_p95_ms = None
     if len(token_times) >= 2:
@@ -140,6 +154,9 @@ async def send_turn(
         "tpot_p95_ms": tpot_p95_ms,
         "latency_ms": latency_ms,
         "output_tokens": n_output_tokens,
+        "sse_content_chunks": sse_content_chunks,
+        "chunk_token_ratio": chunk_token_ratio,
+        "token_chunk_mismatch": token_chunk_mismatch,
         "prompt_tokens_actual": usage.get("prompt_tokens") if usage else None,
         "output_text": "".join(content_parts),
         "output_text_len": len("".join(content_parts)),
@@ -349,13 +366,57 @@ def main():
     summary = compute_ers.summarize(results, exclude_warmup=True)
     summary["benchmark_duration_s"] = duration_s
     summary["prefix_overlap"] = args.prefix_overlap
+
+    # Per-turn actual-prompt-token check (decode-then-retokenize can drift
+    # from the trace's target_in_tokens) and the SSE-chunk/token-count
+    # validation (see send_turn) -- both computed only over scored requests.
+    scored = [r for r in results if not r.get("in_warmup")]
+    mismatches = [r for r in scored if r.get("token_chunk_mismatch")]
+    summary["token_chunk_mismatch_count"] = len(mismatches)
+    by_turn: dict[int, list[dict]] = {}
+    for r in scored:
+        by_turn.setdefault(r["turn_idx"], []).append(r)
+    per_turn_prompt_tokens = {}
+    for turn_idx in sorted(by_turn):
+        actuals = [
+            r["prompt_tokens_actual"] for r in by_turn[turn_idx]
+            if r.get("prompt_tokens_actual") is not None
+        ]
+        targets = [r["target_in_tokens"] for r in by_turn[turn_idx]]
+        if actuals:
+            per_turn_prompt_tokens[turn_idx] = {
+                "target": targets[0] if targets else None,
+                "actual_mean": statistics.mean(actuals),
+                "actual_min": min(actuals),
+                "actual_max": max(actuals),
+                "n": len(actuals),
+            }
+    summary["per_turn_prompt_tokens"] = per_turn_prompt_tokens
+
     summary_path = out_dir / "summary.json"
     with open(summary_path, "w") as f:
         json.dump(summary, f, indent=2)
 
     print("\n=== Summary (scored requests, warmup excluded) ===")
     for k, v in summary.items():
+        if k == "per_turn_prompt_tokens":
+            continue
         print(f"  {k}: {v}")
+    print("\n  per_turn_prompt_tokens (target vs actual, decode+retokenize):")
+    for turn_idx, stats in per_turn_prompt_tokens.items():
+        print(
+            f"    turn {turn_idx}: target={stats['target']} "
+            f"actual_mean={stats['actual_mean']:.1f} "
+            f"[{stats['actual_min']}-{stats['actual_max']}] n={stats['n']}"
+        )
+    if mismatches:
+        print(
+            f"\n  WARNING: {len(mismatches)}/{len(scored)} requests have "
+            f"|sse_content_chunks - output_tokens| > 2 -- TPOT gap-based "
+            f"calculation may be unreliable for these requests. See "
+            f"results.jsonl 'token_chunk_mismatch' field.",
+            file=sys.stderr,
+        )
     print(f"\nSummary written to {summary_path}")
 
 
