@@ -225,57 +225,104 @@ whether this risk is worth a slot. Artifact retained at
 `artifacts/lfm2-w4afp8-mlp0-9-fp8-rest/` (gitignored, regenerable via
 `scripts/quantize_w4afp8_mlp_early.py`).
 
-## Current submit/probe queue (updated 2026-07-25, CPU-bottleneck hypothesis)
+## VERDICT (2026-07-25): CPU-bottleneck hypothesis REJECTED too
 
-ShortConv candidates (Q1/Q2) are REJECTED, see verdict above. All future
-candidates build on `fp8-v1` (v0.22.1, unpatched) only.
+`fp8-metadata-fastpath-async` (decode metadata fast-path patch +
+`--async-scheduling`, v0.22.1 base) official result: **ERS 55.78** --
+worse than the 60.89 baseline on every axis:
 
-**New working hypothesis**: TBT median was 4ms in ALL FOUR ShortConv-verdict
-submissions, completely unmoved by quantizing an additional ~168M
-previously-unquantized params. That rules out GPU compute/weight-bandwidth
-as the real H200/MIG bottleneck. Most likely culprit: vLLM V1 runs 3
-processes (API server, EngineCore, GPU worker) competing for a small vCPU
-allocation on the MIG slice -- CPU-side per-step overhead, not GPU work, is
-probably the real floor. Reprioritized the queue around this.
+| | fp8-v1 (baseline) | fp8-metadata-fastpath-async |
+|---|---|---|
+| ERS | 60.89 | 55.78 |
+| TTFT p50/p95 | ~50/85 ms | 65/112 ms |
+| TBT median | 4 ms | 4 ms |
+| Failed | 4 | 7 |
 
-Submit in this order:
+**TBT median is still 4ms -- the sixth consecutive official H200 submission
+where it hasn't moved**, across baseline, v0.25.1 (unpatched), ShortConv on
+both base versions, and now this CPU-overhead-targeted candidate. If CPU
+scheduling overhead under a constrained vCPU allocation were the real
+bottleneck, at least one of these two mitigations (avoiding redundant
+per-step metadata uploads, overlapping CPU scheduling with GPU execution)
+should have moved it. Neither did. **The CPU-bottleneck hypothesis is
+REJECTED**, following the same fate as the GPU-bandwidth hypothesis before
+it. TTFT and failed_count both got WORSE than baseline, most likely from
+async scheduling's known extra overhead/risk (see the gibberish-output
+note elsewhere in this doc) rather than from the metadata patch, which was
+never tested in isolation on H200.
 
-1. **`submission/docker-compose.fp8-metadata-fastpath-async-seqs8.yml`**
-   (image `<DOCKERHUB_USER>/lfm-serving:fp8-metadata-fastpath-async`) --
-   NEW, submit FIRST. Stacks two CPU-overhead mitigations: the decode
-   metadata fast-path patch (baked into the image, avoids re-uploading
-   per-step scheduling metadata for pure-decode batches) plus
-   `--async-scheduling` (overlaps CPU scheduling with GPU execution). Both
-   attack the CPU-bottleneck hypothesis above from different angles.
-   **Known risk**: a prior local probe on `--async-scheduling` with this
-   same base config found 2/420 gibberish outputs (session 10,
-   `EXPERIMENTS.md` "Async scheduling probe") despite good latency (ERS
-   69.5 local, TBT 2.78ms) -- that probe predates this session and was
-   never re-verified for coherence. Check output text before trusting any
-   ERS improvement from this image, official or local.
-2. **`submission/docker-compose.fp8-async-sync-seqs8.yml`** (explicit
-   `--no-async-scheduling` control) and
-   **`submission/docker-compose.fp8-async-seqs8.yml`** (`--async-scheduling`
-   alone, no metadata patch) -- both reuse the existing `fp8-v1` image, no
-   new build needed. Useful for decomposing item 1's result: if the
-   combined candidate wins, these two isolate how much came from each half.
-3. `submission/docker-compose.fp8-seqs16.yml`
+**What TBT=4ms across six wildly different configurations suggests**: it
+may be a structural floor for this workload/scheduler shape (`max_num_seqs=8`,
+`max_num_batched_tokens=512`) on H200/MIG that isn't reachable by
+patching around the edges (quantization coverage, CPU metadata overhead,
+async overlap) -- consistent with the original brief's own note that real
+4-bit/kernel wins typically require register-level dequant + fused kernels
+co-designed with the model shapes (QServe/QUIK-style), which is out of
+scope for this project's tools and timeline. **TTFT, by contrast, has
+moved in every candidate tested** (usually for the worse so far) -- it may
+be the more tractable lever remaining. The one untested-in-isolation
+TTFT-focused candidate is hybrid-prefix retention
+(`VLLM_PREFIX_CACHE_RETENTION_INTERVAL=0`, vLLM PR #47782) on a v0.25.1
+base WITHOUT the ShortConv patch -- v0.25.1 alone already measured
+harmless (59.89, see the ShortConv verdict above), so this would cleanly
+isolate retention's own effect for the first time (the earlier
+`fp8-shortconv-quant-retention` build conflated it with the rejected
+ShortConv+v0.25.1 interaction and was never submitted).
+
+## Current submit/probe queue (updated 2026-07-25, CPU-bottleneck hypothesis REJECTED)
+
+ShortConv candidates (Q1/Q2) are REJECTED, see verdict above. The
+CPU-bottleneck candidate (metadata fast-path + async scheduling) is also
+REJECTED (55.78, worse than baseline on every axis, TBT still 4ms). All
+future candidates build on `fp8-v1` (v0.22.1, unpatched) or a plain
+v0.25.1 base (confirmed harmless alone) only.
+
+**CPU-bottleneck hypothesis REJECTED (see VERDICT above)** -- the combined
+metadata-fastpath+async candidate scored 55.78, worse than baseline on
+every axis, TBT still 4ms. Do not submit the plain async-only or
+metadata-fastpath-only decomposition candidates below just to "find out
+which half was worse" -- both mitigations already failed together to move
+TBT at all, and async's known gibberish risk plus the worse TTFT/failed
+numbers make this whole direction low-value now. Kept in the queue below
+only as historical/reference entries, demoted to the bottom.
+
+**New priority: TTFT/prefill lever, not TBT/decode.** TTFT has moved (for
+better or worse) in every candidate tested so far; TBT has not moved in
+six straight official submissions across every GPU-side and CPU-side
+mitigation tried. Submit in this order:
+
+1. **`submission/docker-compose.fp8-retention-only-seqs8.yml`** (image
+   `<DOCKERHUB_USER>/lfm-serving:fp8-retention-only`, built from
+   `submission/Dockerfile.fp8-retention-only-local`) -- hybrid-prefix
+   retention ALONE, v0.25.1 base, NO ShortConv patch, no async, no
+   metadata fast-path. v0.25.1 alone already measured harmless (fp8-v0251,
+   ERS 59.89, see ShortConv verdict above), so this isolates retention's
+   own effect for the first time -- the earlier
+   `fp8-shortconv-quant-retention` build conflated it with the rejected
+   ShortConv+v0.25.1 interaction and was never submitted. Targets TTFT via
+   legitimate prefix-cache retention for this workload's shared system
+   prefix + growing per-conversation history shape.
+2. `submission/docker-compose.fp8-seqs16.yml`
    - Image: `siconhoccode/lfm-serving:fp8-v1`
    - Same validated FP8 config, only `max_num_seqs=8 -> 16`
-   - Goal: test whether official 4-6 failures are queue/deadline starvation.
-4. `submission/docker-compose.fp8-metadata-fastpath-seqs8.yml` (metadata
-   patch alone, no async) -- image `siconhoccode/lfm-serving:fp8-metadata-fastpath`,
-   **not yet pushed**. Lower priority than item 1 now that the combined
-   candidate exists; only build this separately if item 1's result needs
-   decomposing and item 2's plain-async isolation isn't enough on its own.
-5. Submit `submission/docker-compose.fp8-metadata-fastpath-seqs16.yml` only if
-   either probe above shows useful signal.
-6. Optional one-slot W4 probe:
+   - Goal: test whether official 4-7 failures are queue/deadline starvation.
+3. Optional one-slot W4 probe:
    `submission/docker-compose.w4a16-g64-mlp10-15-attn10-12-14-bf16.machete.yml`
    after building `siconhoccode/lfm-serving:w4a16-g64-mlp10-15-attn10-12-14-bf16`.
    This is not expected to beat FP8; local trace passed but GSM8K regressed.
    Already submitted once officially and rejected (49.13-49.71 ERS) -- only
    resubmit if a new checkpoint/backend changes the picture.
+
+**Rejected/deprioritized, do not submit further without new evidence:**
+- `submission/docker-compose.fp8-metadata-fastpath-async-seqs8.yml` --
+  REJECTED (55.78, see VERDICT above).
+- `submission/docker-compose.fp8-async-sync-seqs8.yml` /
+  `fp8-async-seqs8.yml` (plain async decomposition) -- low value now that
+  the combined candidate already failed; the known gibberish-output risk
+  (session 10, `EXPERIMENTS.md` "Async scheduling probe") remains
+  unresolved and there's no longer a promising result to decompose.
+- `submission/docker-compose.fp8-metadata-fastpath-seqs8.yml`/`-seqs16.yml`
+  (metadata patch alone) -- image not pushed; low value for the same reason.
 
 ## Related image/config inventory
 

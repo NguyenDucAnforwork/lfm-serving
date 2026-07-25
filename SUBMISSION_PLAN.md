@@ -224,37 +224,41 @@ regressing v0.25.1+patch combination. Local RTX-class hardware still does
 not predict H200 win/loss size; this is now the third confirmed case in
 this project (after `max_num_batched_tokens=256` and W4-G64).
 
-**Current probe order (pivoted back to `fp8-v1`, no ShortConv; new
-CPU-bottleneck hypothesis -- see `SUBMISSION_RESULTS.md` "Current
-submit/probe queue"):** TBT median was 4ms in all four ShortConv-verdict
-submissions, unmoved by quantizing ~168M more params -- rules out GPU
-compute/bandwidth as the H200 bottleneck, points at CPU-side per-step
-overhead under vLLM V1's 3-process architecture competing for a likely
-small vCPU allocation on the MIG slice.
+**UPDATE 2026-07-25: CPU-bottleneck hypothesis also REJECTED.**
+`fp8-metadata-fastpath-async` scored 55.78 officially -- worse than the
+60.89 baseline on every axis (TTFT 65/112ms vs ~50/85ms, failed 7 vs 4),
+and TBT still 4ms, the SIXTH straight official submission where it hasn't
+moved (baseline, v0.25.1 unpatched, ShortConv on both base versions, and
+this one). Both GPU-bandwidth and CPU-scheduling-overhead hypotheses for
+what's pinning TBT at 4ms are now empirically rejected. Do not submit the
+plain async-only or metadata-only decomposition candidates -- low value
+now, and async's known gibberish-output risk remains unresolved.
 
-1. `submission/docker-compose.fp8-metadata-fastpath-async-seqs8.yml` (image
-   `fp8-metadata-fastpath-async`) FIRST -- stacks the decode metadata
-   fast-path patch (baked into the image) with `--async-scheduling`, both
-   attacking the CPU-bottleneck hypothesis. **Re-verify output coherence
-   before trusting an ERS number here** -- a prior local probe on
-   `--async-scheduling` found 2/420 gibberish outputs (session 10,
-   `EXPERIMENTS.md` "Async scheduling probe"), never re-confirmed clean.
-2. `submission/docker-compose.fp8-async-sync-seqs8.yml` (explicit
-   `--no-async-scheduling` control) and
-   `submission/docker-compose.fp8-async-seqs8.yml` (`--async-scheduling`
-   alone) -- both reuse the existing `fp8-v1` image, no build needed. Use
-   to decompose item 1's result if it shows a win.
-3. `submission/docker-compose.fp8-seqs16.yml` with the existing `fp8-v1`
-   image -- test whether the official 4-6 failures are queue/deadline
+Two other directions closed the same session: speculative decoding
+(`suffix` method crashes under real concurrent load, 417/420 failures --
+confirms the earlier `ngram` crash wasn't method-specific, closes the
+entire spec-decode direction including training a custom
+MLP-speculator/EAGLE head -- see EXPERIMENTS.md "T6"), and W4A8-FP8 mixed
+quantization (built successfully but the Machete/CUTLASS kernel is gated
+to `compute_capability==90`/Hopper exactly in vLLM's own code -- cannot be
+validated on this Blackwell dev box, no Hopper GPU available, blocked).
+
+**Current probe order -- TTFT is the only lever that has moved so far
+(usually for the worse); pivot there:**
+
+1. `submission/docker-compose.fp8-retention-only-seqs8.yml` (image
+   `fp8-retention-only`, built from
+   `submission/Dockerfile.fp8-retention-only-local`) -- hybrid-prefix
+   retention (`VLLM_PREFIX_CACHE_RETENTION_INTERVAL=0`, PR #47782) ALONE
+   on v0.25.1, no ShortConv patch. v0.25.1 alone already measured harmless
+   (fp8-v0251, ERS 59.89), so this isolates retention's own effect for the
+   first time -- the earlier `fp8-shortconv-quant-retention` build
+   conflated it with the rejected ShortConv+v0.25.1 interaction and was
+   never submitted.
+2. `submission/docker-compose.fp8-seqs16.yml` with the existing `fp8-v1`
+   image -- test whether the official 4-7 failures are queue/deadline
    starvation.
-4. Build/push `siconhoccode/lfm-serving:fp8-metadata-fastpath` (metadata
-   patch alone, no async), submit
-   `submission/docker-compose.fp8-metadata-fastpath-seqs8.yml` -- lower
-   priority now that item 1 already includes this patch; only needed to
-   decompose item 1 further.
-5. Submit `submission/docker-compose.fp8-metadata-fastpath-seqs16.yml` only if
-   either of the above improves official failures/ERS.
-6. Only after the CPU-bottleneck candidates land: consider a `max_num_seqs`/
+3. Only after the retention candidate lands: consider a `max_num_seqs`/
    `max_num_batched_tokens` sweep anchored on whichever config wins -- not
    before, since local sweeps have twice inverted on H200 already (see the
    `max_num_batched_tokens` and W4 notes above).

@@ -1,0 +1,36 @@
+# Hybrid-prefix retention ALONE, isolated from the rejected ShortConv
+# direction. v0.25.1 base (already measured harmless alone: fp8-v0251,
+# official ERS 59.89, inside the baseline noise band) + only
+# VLLM_PREFIX_CACHE_RETENTION_INTERVAL=0 (vLLM PR #47782, already present
+# in v0.25.1, no patch needed). No ShortConv patch, no async scheduling,
+# no metadata fast-path -- targets TTFT/prefix-cache reuse only.
+#
+# Why this candidate now: six straight official H200 submissions (baseline,
+# v0.25.1 unpatched, ShortConv on both base versions, and the combined
+# metadata-fastpath+async candidate) all landed at TBT median = 4ms,
+# unmoved. TTFT, by contrast, has moved in every candidate tried so far.
+# This workload's shape (shared 1000-token system prefix + growing
+# per-conversation history across 6 turns) is exactly what
+# VLLM_PREFIX_CACHE_RETENTION_INTERVAL=0 targets -- retain only the latest
+# completed prompt boundary instead of dense per-block retention, keeping
+# cache more available for reuse under eviction pressure across the 70
+# concurrent conversations.
+#
+# Build context must be the repository root:
+#   docker build -f submission/Dockerfile.fp8-retention-only-local -t <image>:<tag> .
+#
+# Before building, copy/sync the official BF16 checkpoint into:
+#   submission/model/
+FROM vllm/vllm-openai:v0.25.1
+
+RUN pip install --no-cache-dir xxhash
+
+COPY submission/model /model
+
+ENV HF_HUB_OFFLINE=1 \
+    TRANSFORMERS_OFFLINE=1 \
+    VLLM_NO_USAGE_STATS=1 \
+    DO_NOT_TRACK=1 \
+    VLLM_PREFIX_CACHE_RETENTION_INTERVAL=0
+
+EXPOSE 8000

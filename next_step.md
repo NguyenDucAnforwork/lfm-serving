@@ -60,6 +60,21 @@
 >   entire speculative-decoding direction, including training a custom
 >   MLP-speculator/EAGLE head -- see EXPERIMENTS.md "T6" update.
 >
+> **UPDATE 2026-07-25, later: CPU-bottleneck hypothesis REJECTED too.**
+> `fp8-metadata-fastpath-async` official result: ERS 55.78, worse than the
+> 60.89 baseline on every axis (TTFT 65/112ms, failed 7). TBT still 4ms --
+> the SIXTH straight official submission where it hasn't moved. Both the
+> GPU-bandwidth hypothesis (ShortConv fix) and the CPU-scheduling-overhead
+> hypothesis (metadata fast-path + async) are now empirically rejected.
+> TTFT, not TBT, is the lever that has actually moved across every
+> candidate so far. Current queue: `submission/docker-compose.fp8-retention-only-seqs8.yml`
+> (hybrid-prefix retention ALONE, v0.25.1, no ShortConv patch -- isolates
+> `VLLM_PREFIX_CACHE_RETENTION_INTERVAL=0` for the first time, since
+> v0.25.1 alone already measured harmless) FIRST, then
+> `docker-compose.fp8-seqs16.yml`. Do not resubmit the async/metadata
+> candidates without new evidence -- see `SUBMISSION_RESULTS.md` VERDICT
+> sections for full reasoning.
+>
 > Local CUDA diagnostics are smoke/correctness evidence only. Do not resurrect
 > BitsAndBytes W4, scheduler/cache sweeps, or stock W4 compressed-tensors unless
 > new H200 profiler evidence identifies a specific fixable bottleneck.
