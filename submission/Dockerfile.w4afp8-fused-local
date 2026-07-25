@@ -1,0 +1,33 @@
+# W4AFP8 fused-w13 candidate for LFM2.5-1.2B-Instruct.
+#
+# Build context must be the repository root:
+#   docker build -f submission/Dockerfile.w4afp8-fused-local -t <image>:<tag> .
+#
+# The baked checkpoint is:
+#   artifacts/lfm2-w4afp8-fused-w13-vllm-packed-lmhead-bf16-v2
+#
+# The image intentionally has no ENTRYPOINT/CMD. The competition compose fixes
+# the entrypoint to `python3 -m vllm.entrypoints.openai.api_server` and passes
+# runtime flags in `command:`.
+FROM vllm/vllm-openai:v0.22.1
+
+# Required by --prefix-caching-hash-algo=xxhash.
+RUN pip install --no-cache-dir xxhash
+
+# Full local compressed-tensors checkpoint. This artifact has:
+# - LFM2 MLP w1/w3 fused into vLLM's runtime w13 layout
+# - early MLP W4A8 FP8 packed for vLLM/Cutlass
+# - FP8 attention and late MLP
+# - BF16 lm_head to avoid the local compressed FP8 lm_head Cutlass failure
+COPY artifacts/lfm2-w4afp8-fused-w13-vllm-packed-lmhead-bf16-v2 /model
+
+# Keep runtime offline and quiet.
+# Disable FlashInfer sampler: this candidate was validated with the
+# PyTorch-native sampler path to avoid FlashInfer JIT/compiler issues.
+ENV HF_HUB_OFFLINE=1 \
+    TRANSFORMERS_OFFLINE=1 \
+    VLLM_NO_USAGE_STATS=1 \
+    DO_NOT_TRACK=1 \
+    VLLM_USE_FLASHINFER_SAMPLER=0
+
+EXPOSE 8000
