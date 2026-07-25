@@ -472,26 +472,27 @@ anti-cheat rules, ruling out a runtime HF download).
   backend logs prove Machete or Marlin for `CompressedTensorsWNA16`, and
   accuracy diff is non-negative. Use `scripts/prepare_w4_submission.sh` to
   populate `submission/model` only after that PASS report.
-- `submission/docker-compose.fp8-shortconv-quant-seqs8.yml` — **Q1, new top
-  priority (2026-07-25)**. `FROM vllm/vllm-openai:v0.25.1` +
-  `patches/apply_vllm_shortconv_quant.py` (backports upstream vLLM PR #48917,
-  which was merged 2026-07-21 and confirmed missing from both v0.22.1 and
-  v0.25.1 by reading source directly): LFM2's 10 ShortConv layers'
-  `in_proj`/`out_proj` (~168M params, ~14% of the model) were silently BF16
-  under `--quantization=fp8_per_tensor` because `ShortConv.__init__` never
-  received `quant_config`. Locally verified: model load memory -160 MiB
-  (matches the ~168M-param prediction almost exactly), TPOT mean 1.89ms ->
-  1.79ms, 0/420 errors, GSM8K/ARC/GPQA all within noise of baseline — see
-  `SUBMISSION_RESULTS.md` "New candidates (2026-07-25)". No official H200
-  number yet.
-- `submission/docker-compose.fp8-shortconv-quant-retention-seqs8.yml` — **Q2**,
-  Q1 plus `VLLM_PREFIX_CACHE_RETENTION_INTERVAL=0` (upstream vLLM PR #47782,
-  already present in v0.25.1, no extra backport needed) baked into
-  `submission/Dockerfile.fp8-shortconv-quant-retention-local`. Targets this
-  workload's shared system prefix + growing per-conversation history shape.
-  Accuracy checks pass; local ERS/TPOT for this one specifically isn't clean
-  evidence (measured under concurrent GPU load + a cold torch-compile cache —
-  see `SUBMISSION_RESULTS.md`), so only correctness is established locally.
+- `submission/docker-compose.fp8-shortconv-quant-seqs8.yml`,
+  `-v0221-seqs8.yml`, and `-retention-seqs8.yml` — **ShortConv
+  quant_config fix, REJECTED after 4 official H200 submissions
+  (2026-07-25)**. Backported upstream vLLM PR #48917
+  (`patches/apply_vllm_shortconv_quant.py`, LFM2's 10 ShortConv layers'
+  `in_proj`/`out_proj` were silently BF16 under `fp8_per_tensor`). Looked
+  promising locally (model load -160 MiB, matching the ~168M-param
+  prediction; TPOT -5.4%), but official H200 results isolating {v0.22.1,
+  v0.25.1} x {patched, unpatched} showed TBT unchanged at 4ms in all four
+  runs, and only the v0.25.1+patched combination regressed hard (ERS 51.65
+  vs 60.89 baseline) — a real interaction effect, not a standalone win.
+  Kept in the repo as a documented closed investigation (the underlying
+  vLLM bug is real) — see `SUBMISSION_RESULTS.md` "VERDICT (2026-07-25)".
+  **Do not submit any of these three going forward.**
+- `submission/docker-compose.fp8-async-sync-seqs8.yml` and
+  `-async-seqs8.yml` — current active candidate (post-ShortConv pivot),
+  async scheduling A/B on the plain `fp8-v1` image (no new build needed,
+  `--async-scheduling` is a pure CLI flag). A prior local probe on this
+  same flag combination found 2/420 gibberish outputs (session 10,
+  `EXPERIMENTS.md` "Async scheduling probe") — re-verify output coherence
+  before trusting any ERS improvement here.
 
 **All numeric values above (except `max_model_len`/`gpu_memory_utilization`
 choices, which are RTX-3090-informed but H200-untested) are reasoned

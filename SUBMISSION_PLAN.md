@@ -206,38 +206,44 @@ Current official best is FP8 `fp8_per_tensor`, `max_num_seqs=8`,
 `max_num_batched_tokens=512`: ERS 60.89 best observed, 59.78-60.89 across three
 identical official runs, TBT median 4 ms, failures 4, accuracy drop 0.
 
-**UPDATE 2026-07-25: new top-priority candidates found and locally validated.**
-Verified directly against vLLM source that `ShortConv.__init__` never
-receives `quant_config` (v0.22.1 AND v0.25.1) -- so the 10 ShortConv layers'
-`in_proj`/`out_proj` (~168M params, ~14% of the model) silently stay BF16
-under `--quantization=fp8_per_tensor`, while `Lfm2MLP`/attention right next
-to them ARE quantized. This is upstream vLLM PR #48917 (merged 2026-07-21),
-backported locally as `patches/apply_vllm_shortconv_quant.py`. Local
-validation (model load -160 MiB, matching the ~168M-param prediction almost
-exactly; TPOT mean 1.89ms -> 1.79ms; 0/420 errors; GSM8K/ARC/GPQA all within
-noise of baseline) is in `SUBMISSION_RESULTS.md` "New candidates
-(2026-07-25)". Local numbers only establish correctness/no-regression, not
-win size -- this dev box's GPU is far less bandwidth-bound than H200.
+**UPDATE 2026-07-25 (superseded twice, see below): ShortConv candidates
+tried and REJECTED after 4 official H200 submissions.** Backported upstream
+vLLM PR #48917 (`ShortConv.__init__` never receives `quant_config`, leaving
+~168M params silently BF16 under `fp8_per_tensor`) as
+`patches/apply_vllm_shortconv_quant.py`. Local validation looked promising
+(model load -160 MiB, TPOT -5.4%), but four official H200 submissions
+isolating {v0.22.1, v0.25.1} x {patched, unpatched} all landed within noise
+of the 60.89 baseline EXCEPT the v0.25.1+patched combination, which
+regressed hard to ERS 51.65 -- a real interaction effect between the two,
+not a standalone win from either. **TBT was 4ms in all four runs, no
+exceptions** -- the core hypothesis (ShortConv quantization reduces decode
+weight-read bandwidth enough to matter) is not confirmed by any real H200
+data. Full table and reasoning in `SUBMISSION_RESULTS.md` "VERDICT
+(2026-07-25)". Do not submit `fp8-shortconv-quant-retention` (Q2) -- same
+regressing v0.25.1+patch combination. Local RTX-class hardware still does
+not predict H200 win/loss size; this is now the third confirmed case in
+this project (after `max_num_batched_tokens=256` and W4-G64).
 
-The immediate probe order is now:
+**Current probe order (pivoted back to `fp8-v1`, no ShortConv):**
 
-1. `submission/docker-compose.fp8-shortconv-quant-seqs8.yml` (Q1: ShortConv
-   fix alone, v0.25.1 base) -- submit FIRST, single biggest lever identified
-   so far.
-2. `submission/docker-compose.fp8-shortconv-quant-retention-seqs8.yml` (Q2:
-   Q1 + hybrid-prefix retention, vLLM PR #47782 already in v0.25.1) --
-   submit right after Q1 in the same session if possible.
-3. `submission/docker-compose.fp8-seqs16.yml` with the existing (unpatched)
-   FP8 image -- demoted below Q1/Q2 since a seqs sweep on the old image is
-   lower value once the ShortConv fix changes the decode-cost picture.
-4. Build/push `siconhoccode/lfm-serving:fp8-metadata-fastpath`, submit
+1. `submission/docker-compose.fp8-async-sync-seqs8.yml` (explicit
+   `--no-async-scheduling` control) then
+   `submission/docker-compose.fp8-async-seqs8.yml` (`--async-scheduling`) --
+   both reuse the existing `fp8-v1` image, no new build needed. **Re-verify
+   output coherence before trusting an async ERS number** -- see the
+   gibberish-output note a few paragraphs above; that probe predates this
+   session and was never re-confirmed clean.
+2. `submission/docker-compose.fp8-seqs16.yml` with the existing `fp8-v1`
+   image -- test whether the official 4-6 failures are queue/deadline
+   starvation.
+3. Build/push `siconhoccode/lfm-serving:fp8-metadata-fastpath`, submit
    `submission/docker-compose.fp8-metadata-fastpath-seqs8.yml`.
-5. Submit `submission/docker-compose.fp8-metadata-fastpath-seqs16.yml` only if
+4. Submit `submission/docker-compose.fp8-metadata-fastpath-seqs16.yml` only if
    either of the above improves official failures/ERS.
-6. Only after Q1/Q2 official results land: consider a
-   `max_num_seqs`/`max_num_batched_tokens` sweep anchored on whichever of
-   Q1/Q2 wins -- not before, since local sweeps have twice inverted on H200
-   already (see the `max_num_batched_tokens` and W4 notes above).
+5. Only after the async A/B lands: consider a `max_num_seqs`/
+   `max_num_batched_tokens` sweep anchored on whichever config wins -- not
+   before, since local sweeps have twice inverted on H200 already (see the
+   `max_num_batched_tokens` and W4 notes above).
 
 ## 3. Final-5 selection (after the online round ends)
 

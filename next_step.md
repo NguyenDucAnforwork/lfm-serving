@@ -6,24 +6,32 @@
 > compressed-tensors with both Marlin and Machete scored around 49 ERS with TBT
 > median 6 ms and is rejected for H200/MIG despite good RTX 3090 local latency.
 >
-> **UPDATE 2026-07-25**: two new higher-priority candidates found and locally
-> validated -- see `SUBMISSION_RESULTS.md` "New candidates (2026-07-25)" and
-> `SUBMISSION_PLAN.md`'s updated probe order. Verified against vLLM source
-> that `ShortConv.__init__` never receives `quant_config` (v0.22.1 AND
-> v0.25.1), leaving ~168M params (~14% of the model) silently unquantized
-> under `fp8_per_tensor` -- backported upstream PR #48917 as
-> `patches/apply_vllm_shortconv_quant.py`. Current action queue:
+> **UPDATE 2026-07-25 (superseded same day): ShortConv candidates (Q1/Q2)
+> tried and REJECTED.** Backported upstream PR #48917
+> (`patches/apply_vllm_shortconv_quant.py`, ShortConv layers were silently
+> unquantized under `fp8_per_tensor`) -- looked promising locally, but 4
+> official H200 submissions isolating {v0.22.1, v0.25.1} x {patched,
+> unpatched} showed TBT unchanged at 4ms in ALL FOUR runs, and only the
+> v0.25.1+patched combination regressed (ERS 51.65 vs 60.89 baseline) -- a
+> real interaction effect, not a win from either half alone. Full data in
+> `SUBMISSION_RESULTS.md` "VERDICT (2026-07-25)". Do not submit
+> `fp8-shortconv-quant-retention` -- same regressing combination.
 >
-> 1. Submit `submission/docker-compose.fp8-shortconv-quant-seqs8.yml` (Q1:
->    ShortConv fix alone) FIRST.
-> 2. Submit `submission/docker-compose.fp8-shortconv-quant-retention-seqs8.yml`
->    (Q2: Q1 + hybrid-prefix retention, PR #47782, already in v0.25.1) right after.
-> 3. Submit `submission/docker-compose.fp8-seqs16.yml` using existing
->    `siconhoccode/lfm-serving:fp8-v1` -- demoted below Q1/Q2.
-> 4. Build/push `siconhoccode/lfm-serving:fp8-metadata-fastpath` with
+> Current action queue (pivoted back to `fp8-v1`, no ShortConv):
+>
+> 1. Submit `submission/docker-compose.fp8-async-sync-seqs8.yml` (explicit
+>    `--no-async-scheduling` control), then
+>    `submission/docker-compose.fp8-async-seqs8.yml` (`--async-scheduling`).
+>    Both reuse the existing `fp8-v1` image, no build needed. **Known risk**:
+>    a prior local probe on this same flag combo found 2/420 gibberish
+>    outputs (see "Async scheduling probe" in `EXPERIMENTS.md`, session 10)
+>    -- re-verify output coherence before trusting an async ERS win.
+> 2. Submit `submission/docker-compose.fp8-seqs16.yml` using existing
+>    `siconhoccode/lfm-serving:fp8-v1`.
+> 3. Build/push `siconhoccode/lfm-serving:fp8-metadata-fastpath` with
 >    `submission/Dockerfile.fp8-metadata-fastpath-local`, then submit
 >    `submission/docker-compose.fp8-metadata-fastpath-seqs8.yml`.
-> 5. Submit `submission/docker-compose.fp8-metadata-fastpath-seqs16.yml` only if
+> 4. Submit `submission/docker-compose.fp8-metadata-fastpath-seqs16.yml` only if
 >    either axis improves official failures/ERS.
 >
 > Local CUDA diagnostics are smoke/correctness evidence only. Do not resurrect

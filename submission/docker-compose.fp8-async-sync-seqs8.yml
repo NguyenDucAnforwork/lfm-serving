@@ -1,0 +1,45 @@
+# Explicit-sync control for the async-scheduling A/B. Reuses the existing
+# fp8-v1 image -- no new build/push needed, --async-scheduling is a pure
+# vLLM CLI flag (bool field, auto-generates --async-scheduling/
+# --no-async-scheduling). Passing --no-async-scheduling explicitly (instead
+# of just omitting the flag) matters: vllm/config/scheduler.py's
+# async_scheduling field defaults to None, not False, so omitting the flag
+# is NOT guaranteed identical to explicitly disabling it. This candidate
+# exists to confirm explicit-sync ERS matches the fp8-v1 baseline (60.89)
+# before trusting the async variant's delta as real.
+#
+# Submit this BEFORE docker-compose.fp8-async-seqs8.yml.
+services:
+  model:
+    image: siconhoccode/lfm-serving:fp8-v1
+    entrypoint:
+      - python3 #Don't change this to vllm-server
+      - -m #Don't change this to vllm-server
+      - vllm.entrypoints.openai.api_server #Don't change this to vllm-server
+    command:
+      - --model=/model #Don't change this to vllm-server
+      - --served-model-name=LFM2.5-1.2B-Instruct #Don't change this to vllm-server
+      - --host=0.0.0.0 #Don't change this to vllm-server
+      - --port=8000 #Don't change this to vllm-server
+      - --dtype=bfloat16
+      - --quantization=fp8_per_tensor
+      - --max-model-len=5120
+      - --gpu-memory-utilization=0.70
+      - --tensor-parallel-size=1
+      - --max-num-seqs=8
+      - --max-num-batched-tokens=512
+      - --enable-prefix-caching
+      - --prefix-caching-hash-algo=xxhash
+      - --disable-log-stats
+      - --disable-uvicorn-access-log
+      - --no-async-scheduling
+    ports:
+      - "8000:8000"
+    shm_size: "2g"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

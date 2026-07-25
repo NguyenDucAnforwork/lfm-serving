@@ -2317,7 +2317,7 @@ inflate TPOT/TTFT independent of the retention mechanism. The only clean
 signal from this run is "no crash, no error" -- confirms Q2 is safe to
 submit, not that it is faster or slower than Q1 locally.
 
-### Conclusion and next step
+### Conclusion and next step (superseded by Session 13 below)
 
 Both Q1 and Q2 pass local correctness + accuracy gates. Neither has an
 official H200 number. This is now the top-priority open question -- see
@@ -2327,3 +2327,68 @@ order in `SUBMISSION_PLAN.md`. Do not run a `max_num_seqs`/
 H200 result -- this file already has two confirmed cases
 (`max_num_batched_tokens=256` and W4-G64) where the local-to-H200 ranking
 inverted.
+
+## Session 13: official H200 verdict on ShortConv fix -- REJECTED (2026-07-25)
+
+Four official submissions, each changing exactly one variable from the
+60.89 baseline, fully isolate {base image version} x {ShortConv patch}:
+
+| Image | Base | Patched? | ERS | TTFT p50/p95 (ms) | TBT median (ms) | Failed |
+|---|---|---|---:|---|---:|---:|
+| `fp8-v1` | v0.22.1 | no | 60.89 | 50/85 | 4 | 4 |
+| `fp8-v0251` | v0.25.1 | no | 59.89 | 52/81 | 4 | 5 |
+| `fp8-shortconv-quant-v0221` | v0.22.1 | yes | 60.15 | 59/100 | 4 | 6 |
+| `fp8-shortconv-quant` | v0.25.1 | yes | 51.65 | 81/125 | 4 | 5 |
+
+Sequence of reasoning as each result landed:
+
+1. First official Q1 result (`fp8-shortconv-quant`, v0.25.1+patched) came
+   back at 51.65 -- worse than baseline, with TBT completely unchanged
+   (4ms) and TTFT much worse. Since TBT is the metric the fix should move,
+   the leading hypothesis was "v0.25.1 base image regression" (the two
+   variables -- version bump and patch -- were changed together in that
+   first submission, so it couldn't distinguish which caused what).
+2. Verified the patch WAS correctly baked into the pushed image (`docker
+   run --rm --entrypoint python3 <image> -c "import inspect; from
+   vllm.model_executor.layers.mamba.short_conv import ShortConv;
+   print('quant_config' in inspect.signature(ShortConv.__init__).parameters)"`
+   printed `True`), ruling out a build/patch problem.
+3. Submitted `fp8-v0251` (v0.25.1, unpatched) to isolate the version
+   variable alone: ERS 59.89, TTFT 52/81ms -- essentially identical to
+   baseline, inside the established 59.78-60.89 noise band. **This refuted
+   the "v0.25.1 regression" hypothesis** -- the base image bump alone is
+   harmless.
+4. Submitted `fp8-shortconv-quant-v0221` (v0.22.1, patched) to isolate the
+   patch variable alone: ERS 60.15, TTFT 59/100ms -- also inside/near the
+   noise band, not a standalone win but not a clear loss either.
+5. Conclusion: **neither variable alone explains the 51.65 regression --
+   only the v0.25.1+patch combination does.** A genuine interaction effect,
+   not attributable to either half. More importantly: **TBT was 4ms in all
+   four runs, zero exceptions** -- the core hypothesis (ShortConv
+   quantization reduces decode weight-read bandwidth enough to move TBT)
+   is not confirmed by any real H200 data, despite clean local evidence on
+   this dev box (RTX PRO 6000 Blackwell) of the expected memory reduction
+   and a modest TPOT improvement. Whatever bottlenecks decode on the real
+   H200/MIG slice, it evidently isn't ShortConv weight-read bandwidth the
+   way the local Fermi-style model predicted.
+
+**Decision: ShortConv quantization is REJECTED as a candidate direction.**
+Do not submit `fp8-shortconv-quant-retention` (Q2) -- built on the same
+v0.25.1+patch combination confirmed to regress, with no standalone win from
+either half to justify further interaction-effect debugging (which would
+need H200 profiler access this project doesn't have). This is the third
+confirmed case in this project of local RTX-class hardware failing to
+predict H200 win/loss size or direction (after `max_num_batched_tokens=256`
+and W4-G64) -- if anything the strongest case, since the local evidence
+(memory reduction, TPOT improvement) was real and reproducible, just not
+predictive of the real bottleneck on grading hardware.
+
+Pivoted back to `fp8-v1` (v0.22.1, unpatched) as the base for all further
+candidates. Next up: async scheduling A/B (`docker-compose.fp8-async-sync-
+seqs8.yml` vs `docker-compose.fp8-async-seqs8.yml`), reusing the existing
+`fp8-v1` image since `--async-scheduling` is a pure CLI flag -- no new
+Docker build needed. Carries a known correctness risk from a prior local
+probe (session 10, "Async scheduling probe" above): 2/420 gibberish
+outputs on the same flag/config combination, never re-verified for
+coherence. Re-check output text before trusting any async ERS improvement,
+official or local.

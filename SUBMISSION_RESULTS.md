@@ -67,7 +67,54 @@ Accuracy drop:            0
    4 failures in all official repeats. If these are queue/deadline failures,
    `max_num_seqs=16` may recover some score without touching accuracy.
 
-## New candidates (2026-07-25): ShortConv quant_config fix
+## VERDICT (2026-07-25, updated after 4 official H200 submissions): ShortConv fix REJECTED
+
+Four official submissions now isolate every combination of {v0.22.1,
+v0.25.1} x {patched, unpatched}:
+
+| Image | Base | Patched? | ERS | TTFT p50/p95 (ms) | TBT median (ms) | Failed |
+|---|---|---|---:|---|---:|---:|
+| `fp8-v1` | v0.22.1 | no | 60.89 | 50/85 | 4 | 4 |
+| `fp8-v0251` | v0.25.1 | no | 59.89 | 52/81 | 4 | 5 |
+| `fp8-shortconv-quant-v0221` | v0.22.1 | **yes** | 60.15 | 59/100 | 4 | 6 |
+| `fp8-shortconv-quant` | v0.25.1 | **yes** | 51.65 | 81/125 | 4 | 5 |
+
+Conclusions:
+
+1. **TBT is 4ms in all four runs, no exceptions.** The core hypothesis --
+   quantizing ShortConv's ~168M previously-unquantized params would reduce
+   decode weight-read bandwidth and lower TBT -- is **not confirmed by any
+   real H200 data**, despite clear local evidence (RTX PRO 6000 Blackwell)
+   of a model-load-memory reduction (-160 MiB, matching the math almost
+   exactly) and a modest local TPOT improvement (-5.4%). Whatever the real
+   H200/MIG decode bottleneck is, it evidently isn't ShortConv weight-read
+   bandwidth in the way predicted. Local RTX-class hardware is confirmed
+   (again) to not predict H200 win/loss size -- this project's third
+   confirmed case after `max_num_batched_tokens=256` and W4-G64.
+2. **v0.25.1 alone is a statistical wash** (59.89 vs 60.89 baseline, inside
+   the established 59.78-60.89 noise band) -- ruling out "the base image
+   bump caused the regression" as a general explanation.
+3. **The patch alone (on v0.22.1) is also a statistical wash** (60.15,
+   inside the same noise band) -- ruling out "the patch itself is broken"
+   as a general explanation.
+4. **Only the v0.25.1 + patch combination regresses hard** (51.65, TTFT
+   +60-65% worse than baseline) -- a real, reproducible interaction effect
+   between the two, not attributable to either alone. Not investigated
+   further: with neither half showing a standalone win, there is no
+   remaining upside to chase in this direction, and interaction-effect
+   debugging without H200 profiler access is not a good use of further
+   submission slots.
+
+**Decision: do not pursue ShortConv quantization further.** Do not submit
+`fp8-shortconv-quant-retention` (Q2) -- it is built on the same v0.25.1 +
+patch combination confirmed to regress. Revert to `fp8-v1` as the base for
+all future candidates. `patches/apply_vllm_shortconv_quant.py` and the
+`fp8-shortconv-quant*` Dockerfiles are kept in the repo as a documented,
+closed investigation (the underlying vLLM bug this backports -- PR #48917
+-- is real and worth knowing about even though it didn't pay off for this
+workload/hardware combination), not as active candidates.
+
+## Historical: ShortConv quant_config fix investigation (2026-07-25, superseded by verdict above)
 
 Verified directly against vLLM source (both the installed v0.22.1 and the
 v0.25.1 tag on GitHub) that `Lfm2ShortConvDecoderLayer` builds `ShortConv()`
@@ -124,35 +171,43 @@ spec scores all 420 (warmup_count=0). Fixed trace is
 `trace_grading_spec_v2.jsonl`; `run_experiment.sh` now defaults to it and
 preflights the trace shape before every run.
 
-## Current submit/probe queue
+## Current submit/probe queue (updated 2026-07-25 after ShortConv verdict)
+
+ShortConv candidates (Q1/Q2) are REJECTED, see verdict above. All future
+candidates build on `fp8-v1` (v0.22.1, unpatched) only.
 
 Submit in this order:
 
-1. **`submission/docker-compose.fp8-shortconv-quant-seqs8.yml`** (Q1) --
-   image `<DOCKERHUB_USER>/lfm-serving:fp8-shortconv-quant`. Single biggest
-   lever identified so far (quantizes ~14% of the model that was previously
-   silently unquantized); submit first to isolate its effect cleanly.
-2. **`submission/docker-compose.fp8-shortconv-quant-retention-seqs8.yml`**
-   (Q2) -- image `<DOCKERHUB_USER>/lfm-serving:fp8-shortconv-quant-retention`.
-   Submit right after Q1, same grading session if the portal allows, so both
-   real H200 data points land together.
-3. `submission/docker-compose.fp8-seqs16.yml`
+1. **`submission/docker-compose.fp8-async-sync-seqs8.yml`** (explicit
+   `--no-async-scheduling` control) and
+   **`submission/docker-compose.fp8-async-seqs8.yml`** (`--async-scheduling`)
+   -- both reuse the existing `fp8-v1` image, no new build needed (async
+   scheduling is a pure runtime CLI flag). Submit the sync control first as
+   a sanity check that explicit sync == current baseline, then async.
+   **Known risk before submitting async**: a prior local probe on this same
+   flag/config combination (`configs/fp8_async_scheduling.env`, session 10,
+   `EXPERIMENTS.md`) found 2/420 outputs contained gibberish/replacement-
+   character fragments, despite good latency (ERS 69.5 local, TBT 2.78ms).
+   That probe was against the RTX 3090 dev box, not H200 -- re-verify output
+   coherence (not just latency/ERS) before trusting an official async
+   submission; a fast ERS number with corrupted output is not a real win.
+2. `submission/docker-compose.fp8-seqs16.yml`
    - Image: `siconhoccode/lfm-serving:fp8-v1`
    - Same validated FP8 config, only `max_num_seqs=8 -> 16`
-   - Goal: test whether official 4 failures are queue/deadline starvation.
-   - Demote below Q1/Q2 -- if the ShortConv fix changes the decode-cost
-     picture, a seqs sweep on the OLD (unpatched) image is lower value.
-4. Build/push `siconhoccode/lfm-serving:fp8-metadata-fastpath`, then submit
+   - Goal: test whether official 4-6 failures are queue/deadline starvation.
+3. Build/push `siconhoccode/lfm-serving:fp8-metadata-fastpath`, then submit
    `submission/docker-compose.fp8-metadata-fastpath-seqs8.yml`
    - Same runtime flags as best FP8.
    - Bakes local vLLM decode metadata fast-path patch.
    - Goal: test whether the measured local launch/copy event reduction transfers.
-5. Submit `submission/docker-compose.fp8-metadata-fastpath-seqs16.yml` only if
+4. Submit `submission/docker-compose.fp8-metadata-fastpath-seqs16.yml` only if
    either probe above shows useful signal.
-6. Optional one-slot W4 probe:
+5. Optional one-slot W4 probe:
    `submission/docker-compose.w4a16-g64-mlp10-15-attn10-12-14-bf16.machete.yml`
    after building `siconhoccode/lfm-serving:w4a16-g64-mlp10-15-attn10-12-14-bf16`.
    This is not expected to beat FP8; local trace passed but GSM8K regressed.
+   Already submitted once officially and rejected (49.13-49.71 ERS) -- only
+   resubmit if a new checkpoint/backend changes the picture.
 
 ## Related image/config inventory
 
