@@ -18,10 +18,19 @@ out, no growing context). Here the context GROWS turn over turn:
                          + t * (output_pinned(300) + new_user(150))
                        = 2150 + 450 * t     (t = 0..5)  -> 2150..4400
 
-We preserve the seed-42 arrival timing (turn-0 timestamp_ms), think_ms, and the
-warmup flags from the existing public trace (already Poisson seed 42), and only
-rewrite the token-length structure (in_tokens_est growing) and out_tokens_max=300
-so downstream replay drives the real multi-turn growing-context shape.
+We preserve the seed-42 arrival timing (turn-0 timestamp_ms) and think_ms from
+the existing public trace (already Poisson seed 42), and rewrite the
+token-length structure (in_tokens_est growing) and out_tokens_max=300 so
+downstream replay drives the real multi-turn growing-context shape.
+
+NOTE (fixed 2026-07-25): the public trace's `in_warmup` flags (conv_id 0-14,
+90/420 rows) are stale leftovers from the OLD workload's cold-start warmup
+convention. The official grader for the updated spec scores all 420 requests
+(warmup_count=0) -- there is no warmup carve-out in this workload. We
+therefore force in_warmup=False for every row instead of copying the old
+flag; local ERS must be computed over all 420 requests to match official
+scoring. Output goes to trace_grading_spec_v2.jsonl (not overwriting the old
+trace_grading_spec.jsonl) so old runs stay reproducible for comparison.
 """
 from __future__ import annotations
 
@@ -35,7 +44,7 @@ OUTPUT_TOKENS_PER_TURN_PINNED = 300
 
 ROOT = Path(__file__).resolve().parent.parent
 SRC_TRACE = ROOT / "trace_grading_public.jsonl"
-OUT_TRACE = ROOT / "trace_grading_spec.jsonl"
+OUT_TRACE = ROOT / "trace_grading_spec_v2.jsonl"
 
 
 def expected_in_tokens(turn_idx: int) -> int:
@@ -52,11 +61,18 @@ def main() -> None:
     for r in src:
         row = dict(r)
         turn = row["turn_idx"]
+        # Official grader scores all 420 requests (warmup_count=0); do not
+        # inherit the old trace's cold-start warmup carve-out.
+        row["in_warmup"] = False
         row["in_tokens_est"] = expected_in_tokens(turn)
         # in_chars is only informational; keep a rough char estimate (~3 chars/token)
         row["in_chars"] = row["in_tokens_est"] * 3
         row["out_tokens_max"] = OUTPUT_TOKENS_PER_TURN_PINNED
         out_rows.append(row)
+
+    assert len(out_rows) == 420, f"expected 420 rows, got {len(out_rows)}"
+    assert sum(bool(row["in_warmup"]) for row in out_rows) == 0, "warmup rows leaked into spec_v2 trace"
+    assert {row["turn_idx"] for row in out_rows} == set(range(6)), "unexpected turn_idx values"
 
     with open(OUT_TRACE, "w") as f:
         for row in out_rows:
@@ -64,6 +80,7 @@ def main() -> None:
 
     convs = sorted({r["conv_id"] for r in out_rows})
     print(f"Wrote {len(out_rows)} rows ({len(convs)} conversations) -> {OUT_TRACE}")
+    print("Validated: 420 scored requests, 0 warmup")
     sample = [r for r in out_rows if r["conv_id"] == convs[0]]
     print("Sample conv token profile (turn_idx, in_tokens_est, out_tokens_max):")
     for r in sample:

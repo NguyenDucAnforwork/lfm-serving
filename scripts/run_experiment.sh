@@ -7,8 +7,12 @@
 # Usage: scripts/run_experiment.sh <config_name> [extra replay_trace.py args]
 #
 # Optional env:
-#   TRACE=trace_grading_spec.jsonl WORKLOAD=spec MODEL_NAME=LFM2.5-1.2B-Instruct TOKENIZER_MODEL=LiquidAI/LFM2.5-1.2B-Instruct
+#   TRACE=trace_grading_spec_v2.jsonl WORKLOAD=spec MODEL_NAME=LFM2.5-1.2B-Instruct TOKENIZER_MODEL=LiquidAI/LFM2.5-1.2B-Instruct
 #   KEEP_OUTPUT_TEXT=1  # persist generated text for exact output-diff analysis
+#
+# Defaults below are trace_grading_spec_v2.jsonl / WORKLOAD=spec (the current
+# official workload, 420 scored requests, 0 warmup -- see gen_spec_trace.py).
+# Override TRACE explicitly to replay the legacy trace_grading_public.jsonl.
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -32,10 +36,35 @@ set -a
 source "$CONFIG_FILE"
 set +a
 export LOG_FILE="$OUT_DIR/server.log"
-TRACE="${TRACE:-trace_grading_public.jsonl}"
-WORKLOAD="${WORKLOAD:-legacy}"
+TRACE="${TRACE:-trace_grading_spec_v2.jsonl}"
+WORKLOAD="${WORKLOAD:-spec}"
 MODEL_NAME="${MODEL_NAME:-${SERVED_MODEL_NAME:-$MODEL}}"
 TOKENIZER_MODEL="${TOKENIZER_MODEL:-$MODEL}"
+
+if [[ "$WORKLOAD" == "spec" && "$TRACE" != *"spec"* ]]; then
+  echo "ERROR: WORKLOAD=spec requires a spec trace (got TRACE=$TRACE)" >&2
+  exit 2
+fi
+
+python3 - "$PROJECT_DIR/$TRACE" "$WORKLOAD" <<'PY'
+import json
+import sys
+
+path, workload = sys.argv[1], sys.argv[2]
+rows = [json.loads(x) for x in open(path) if x.strip()]
+
+if workload == "spec":
+    assert len(rows) == 420, f"expected 420 rows in {path}, got {len(rows)}"
+    assert sum(bool(r.get("in_warmup")) for r in rows) == 0, (
+        f"{path} has warmup rows but WORKLOAD=spec scores all requests "
+        "(official grader warmup_count=0) -- regenerate with gen_spec_trace.py"
+    )
+    assert {r["turn_idx"] for r in rows} == set(range(6)), f"unexpected turn_idx values in {path}"
+    print(f"Trace validated: {path} -- 420 scored requests, 0 warmup")
+else:
+    print(f"Trace {path} loaded ({len(rows)} rows) -- WORKLOAD={workload}, skipping spec preflight")
+PY
+[[ $? -eq 0 ]] || { echo "TRACE PREFLIGHT FAILED" >&2; exit 2; }
 
 bash "$SCRIPT_DIR/start_server.sh" &
 SERVER_PID=$!
