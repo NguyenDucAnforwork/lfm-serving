@@ -1,0 +1,29 @@
+# W4AFP8 w13-only candidate for LFM2.5-1.2B-Instruct.
+#
+# Build context must be the repository root:
+#   docker build -f submission/Dockerfile.w4afp8-w13-only-local -t <image>:<tag> .
+#
+# The baked checkpoint is:
+#   artifacts/lfm2-w4afp8-w13-only-vllm-packed-lmhead-bf16-v2
+#
+# The image intentionally has no ENTRYPOINT/CMD. The competition compose fixes
+# the entrypoint to `python3 -m vllm.entrypoints.openai.api_server` and passes
+# runtime flags in `command:`.
+FROM vllm/vllm-openai:v0.22.1
+
+# Required by --prefix-caching-hash-algo=xxhash.
+RUN pip install --no-cache-dir xxhash
+
+# Full local compressed-tensors checkpoint:
+# - early MLP w13: W4A8 FP8, fused/packed for vLLM Cutlass
+# - early MLP w2: FP8 per-channel
+# - attention + late MLP: FP8
+# - lm_head: BF16 tied embedding weight
+COPY artifacts/lfm2-w4afp8-w13-only-vllm-packed-lmhead-bf16-v2 /model
+
+ENV HF_HUB_OFFLINE=1 \
+    TRANSFORMERS_OFFLINE=1 \
+    VLLM_NO_USAGE_STATS=1 \
+    DO_NOT_TRACK=1
+
+EXPOSE 8000

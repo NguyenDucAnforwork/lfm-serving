@@ -1,0 +1,37 @@
+# Offline FP8 static-activation candidate.
+#
+# Image should be built from submission/Dockerfile.fp8-static-acts-local.
+# Do not pass --quantization here; /model/config.json contains the
+# compressed-tensors quantization config.
+services:
+  model:
+    image: siconhoccode/lfm-serving:fp8-static-acts-v1
+    entrypoint:
+      - python3
+      - -m
+      - vllm.entrypoints.openai.api_server
+    command:
+      - --model=/model
+      - --served-model-name=LFM2.5-1.2B-Instruct
+      - --host=0.0.0.0
+      - --port=8000
+      - --dtype=bfloat16
+      - --max-model-len=5120
+      - --gpu-memory-utilization=0.70
+      - --tensor-parallel-size=1
+      - --max-num-seqs=8
+      - --max-num-batched-tokens=512
+      - --enable-prefix-caching
+      - --prefix-caching-hash-algo=xxhash
+      - --disable-log-stats
+      - --disable-uvicorn-access-log
+    ports:
+      - "8000:8000"
+    shm_size: "2g"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

@@ -1,0 +1,28 @@
+# Offline W8A8 FP8 static-activation candidate for LFM2.5-1.2B-Instruct.
+#
+# Build context must be the repository root:
+#   docker build -f submission/Dockerfile.fp8-static-acts-local -t <image>:<tag> .
+#
+# The baked checkpoint is:
+#   artifacts/lfm2-fp8-static-acts-attn-mlp-bf16conv-lmhead-v1
+#
+# The image intentionally has no ENTRYPOINT/CMD. The competition compose fixes
+# the entrypoint to `python3 -m vllm.entrypoints.openai.api_server` and passes
+# runtime flags in `command:`.
+FROM vllm/vllm-openai:v0.22.1
+
+# Required by --prefix-caching-hash-algo=xxhash.
+RUN pip install --no-cache-dir xxhash
+
+# Full local compressed-tensors checkpoint:
+# - attention + MLP dense projections: offline FP8 weights + static FP8 input scales
+# - ShortConv projections/depthwise conv: BF16
+# - tied embedding/lm_head: BF16
+COPY artifacts/lfm2-fp8-static-acts-attn-mlp-bf16conv-lmhead-v1 /model
+
+ENV HF_HUB_OFFLINE=1 \
+    TRANSFORMERS_OFFLINE=1 \
+    VLLM_NO_USAGE_STATS=1 \
+    DO_NOT_TRACK=1
+
+EXPOSE 8000
