@@ -1,0 +1,32 @@
+# Diagnostic submission: vLLM 0.25.1 FP8 target plus the public
+# LFM2.5-350M generic draft. Build from the repository root after placing the
+# target checkpoint in submission/model/.
+FROM vllm/vllm-openai:v0.25.1
+
+ARG DRAFT_REVISION=b9d6e4e2d75f440b12a2b4d731c808004ecbbd89
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends patch \
+    && rm -rf /var/lib/apt/lists/* \
+    && pip install --no-cache-dir xxhash
+
+COPY submission/patches/vllm-0.25.1-lfm2-draft-multigroup.patch /tmp/lfm2-draft.patch
+
+RUN site_packages="$(python3 -c 'import pathlib, vllm; print(pathlib.Path(vllm.__file__).parent.parent)')" \
+    && patch -d "${site_packages}" -p1 < /tmp/lfm2-draft.patch \
+    && rm /tmp/lfm2-draft.patch \
+    && python3 -m py_compile \
+       "${site_packages}/vllm/v1/spec_decode/llm_base_proposer.py" \
+       "${site_packages}/vllm/v1/worker/gpu_model_runner.py"
+
+# Download during the GCP build so the 350M checkpoint does not need rsync.
+RUN python3 -c "from huggingface_hub import snapshot_download; snapshot_download('LiquidAI/LFM2.5-350M', revision='${DRAFT_REVISION}', local_dir='/draft-model')"
+
+COPY submission/model /model
+
+ENV HF_HUB_OFFLINE=1 \
+    TRANSFORMERS_OFFLINE=1 \
+    VLLM_NO_USAGE_STATS=1 \
+    DO_NOT_TRACK=1
+
+EXPOSE 8000
