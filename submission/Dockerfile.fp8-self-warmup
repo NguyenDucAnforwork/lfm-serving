@@ -1,0 +1,9 @@
+# Reuses the already-pushed FP8/BF16 checkpoint baked into fp8-v1.
+FROM siconhoccode/lfm-serving:fp8-v1
+
+# Build with `submission/` as the context so no checkpoint is uploaded to the
+# Docker daemon: docker build -f submission/Dockerfile.fp8-self-warmup ... submission
+COPY warmup_entrypoint.py /opt/lfm/warmup_entrypoint.py
+
+ENV LFM_WARMUP_START_TIMEOUT=180
+ENTRYPOINT ["python3", "/opt/lfm/warmup_entrypoint.py"]

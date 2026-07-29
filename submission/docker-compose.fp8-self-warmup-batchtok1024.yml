@@ -1,0 +1,37 @@
+services:
+  model:
+    image: siconhoccode/lfm-serving:fp8-self-warmup-v1
+    entrypoint:
+      - python3
+      - /opt/lfm/warmup_entrypoint.py
+    command:
+      - --model=/model
+      - --served-model-name=LFM2.5-1.2B-Instruct
+      - --host=0.0.0.0
+      - --port=8000
+      - --dtype=bfloat16
+      - --quantization=fp8_per_tensor
+      - --max-model-len=5120
+      - --gpu-memory-utilization=0.70
+      - --tensor-parallel-size=1
+      - --max-num-seqs=8
+      - --max-num-batched-tokens=1024
+      - --enable-prefix-caching
+      - --prefix-caching-hash-algo=xxhash
+      - --disable-log-stats
+      - --disable-uvicorn-access-log
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /tmp/lfm-warmup-ready"]
+      interval: 2s
+      timeout: 1s
+      retries: 90
+    ports:
+      - "8000:8000"
+    shm_size: "2g"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
